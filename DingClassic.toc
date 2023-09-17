@@ -1,0 +1,7 @@
+## Interface: 11302
+## Title: Ding Classic
+## Notes: Announces in guild chat and yells when you ding!
+## Dependencies:
+## SavedVariablesPerCharacter:
+DingClassic.lua
+DingClassic.xml
