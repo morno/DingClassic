@@ -1,7 +1,8 @@
 ## Interface: 11302
 ## Title: Ding Classic
-## Notes: Announces in guild chat and yells when you ding!
+## Notes: Announces in guild chat and yell/say when you ding!
 ## Dependencies:
+## SavedVariables: DingClassicSavedSettings
 ## SavedVariablesPerCharacter:
 DingClassic.lua
 DingClassic.xml

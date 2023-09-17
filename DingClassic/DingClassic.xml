@@ -1,42 +1,61 @@
-<Ui xmlns="http://www.blizzard.com/wow/ui/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.blizzard.com/wow/ui/ ..\..\FrameXML\UI.xsd">
-    <Frame name="DingClassicFrame" toplevel="true" parent="UIParent" movable="true" hidden="false">
+<Ui xmlns="http://www.w3.org/2001/XMLSchema-instance">
+    <Script file="DingClassic.lua"/>
+    <Frame name="DingClassicOptionsPanel" parent="InterfaceOptionsPanelTemplate">
         <Scripts>
-            <OnLoad>
-                DingClassic_OnLoad(self);
-            </OnLoad>
-            <OnEvent>
-                DingClassic_OnEvent(self, event, ...);
-            </OnEvent>
+            <OnLoad function="DingClassicOptionsPanel_OnLoad"/>
         </Scripts>
-    </Frame>
-
-    <!-- Add an Options Panel -->
-    <Frame name="DingClassicOptionsPanel" parent="InterfaceOptionsFramePanelContainer">
-        <Scripts>
-            <OnLoad>
-                DingClassic_OnLoad(self);
-            </OnLoad>
-        </Scripts>
-        <CheckButton name="DingClassicOptionsPanelCheckbox">
-            <Size>
-                <AbsDimension x="24" y="24"/>
-            </Size>
+        <CheckButton name="DingClassicOptionsPanelCheckbox" inherits="InterfaceOptionsCheckButtonTemplate">
             <Anchors>
-                <Anchor point="TOPLEFT">
-                    <Offset>
-                        <AbsDimension x="10" y="-10"/>
-                    </Offset>
-                </Anchor>
+                <Anchor point="TOPLEFT" relativeTo="$parent" relativePoint="TOPLEFT" x="10" y="-10"/>
             </Anchors>
-            <Scripts>
-                <OnClick>
-                    showDingMessages = self:GetChecked()
-                </OnClick>
-            </Scripts>
-            <Text>
-                <!-- Set your checkbox label here -->
-                <AbsDimension x="200" y="24"/>
-            </Text>
+            <Size>
+                <AbsDimension x="20" y="20"/>
+            </Size>
+            <Text inherits="GameFontNormal" text="Enable Ding Messages"/>
         </CheckButton>
+        <CheckButton name="DingClassicOptionsPanelCheckboxYell" inherits="InterfaceOptionsCheckButtonTemplate">
+            <Anchors>
+                <Anchor point="TOPLEFT" relativeTo="DingClassicOptionsPanelCheckbox" relativePoint="BOTTOMLEFT" x="0" y="-10"/>
+            </Anchors>
+            <Size>
+                <AbsDimension x="20" y="20"/>
+            </Size>
+            <Text inherits="GameFontNormal" text="Send to Yell"/>
+        </CheckButton>
+        <CheckButton name="DingClassicOptionsPanelCheckboxSay" inherits="InterfaceOptionsCheckButtonTemplate">
+            <Anchors>
+                <Anchor point="TOPLEFT" relativeTo="DingClassicOptionsPanelCheckboxYell" relativePoint="BOTTOMLEFT" x="0" y="-10"/>
+            </Anchors>
+            <Size>
+                <AbsDimension x="20" y="20"/>
+            </Size>
+            <Text inherits="GameFontNormal" text="Send to Say"/>
+        </CheckButton>
+        <CheckButton name="DingClassicOptionsPanelCheckboxGuild" inherits="InterfaceOptionsCheckButtonTemplate">
+            <Anchors>
+                <Anchor point="TOPLEFT" relativeTo="DingClassicOptionsPanelCheckboxSay" relativePoint="BOTTOMLEFT" x="0" y="-10"/>
+            </Anchors>
+            <Size>
+                <AbsDimension x="20" y="20"/>
+            </Size>
+            <Text inherits="GameFontNormal" text="Send to Guild"/>
+        </CheckButton>
+        <Frame name="DingClassicOptionsPanelDropdown" inherits="UIDropDownMenuTemplate">
+            <Anchors>
+                <Anchor point="TOPLEFT" relativeTo="DingClassicOptionsPanelCheckboxGuild" relativePoint="BOTTOMLEFT" x="-10" y="-20"/>
+            </Anchors>
+            <Size>
+                <AbsDimension x="150" y="32"/>
+            </Size>
+        </Frame>
+        <Button name="DingClassicOptionsPanelTestDingButton" inherits="UIPanelButtonTemplate">
+            <Anchors>
+                <Anchor point="TOPLEFT" relativeTo="DingClassicOptionsPanelDropdown" relativePoint="BOTTOMLEFT" x="0" y="-20"/>
+            </Anchors>
+            <Size>
+                <AbsDimension x="150" y="25"/>
+            </Size>
+            <Text inherits="GameFontNormal" text="Test Ding Message"/>
+        </Button>
     </Frame>
 </Ui>
