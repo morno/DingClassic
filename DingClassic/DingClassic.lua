@@ -429,6 +429,43 @@ local f = CreateFrame("Frame")
 f:RegisterEvent("ADDON_LOADED")
 f:SetScript("OnEvent", OnEvent)
 
+-- Add an event handler for the PLAYER_LEVEL_UP event
+local function OnPlayerLevelUp(level)
+    if DingClassicSettings.showDingMessages then
+        local selectedPool = messagePools[DingClassicSettings.selectedMessagePool]
+        if selectedPool then
+            local numMessages = #selectedPool
+            if numMessages > 0 then
+                local randomIndex = math.random(1, numMessages)
+                local message = selectedPool[randomIndex]
+                message = string.format(message, level)
+
+                -- Send the message to Yell, Say, and Guild channels if enabled
+                if DingClassicSettings.sendToYell then
+                    SendChatMessage(message, "YELL")
+                end
+                if DingClassicSettings.sendToSay then
+                    SendChatMessage(message, "SAY")
+                end
+                if DingClassicSettings.sendToGuild then
+                    SendChatMessage(message, "GUILD")
+                end
+            else
+                print("No messages found in the selected pool.")
+            end
+        else
+            print("Selected message pool not found.")
+        end
+    end
+end
+
+-- Register the event handler for PLAYER_LEVEL_UP event
+local frame = CreateFrame("Frame")
+frame:RegisterEvent("PLAYER_LEVEL_UP")
+frame:SetScript("OnEvent", function(_, _, level)
+    OnPlayerLevelUp(level)
+end)
+
 SLASH_DINGCLASSIC1 = "/dingclassic"
 SlashCmdList["DINGCLASSIC"] = function()
     InterfaceOptionsFrame_OpenToCategory("Ding Classic")
