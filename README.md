@@ -1,7 +1,7 @@
 DingClassic - A World of Warcraft Classic Addon
 Overview
 
-DingClassic is a World of Warcraft Classic addon that announces level-ups in a fun and customizable way. It provides options to show ding messages, send them to Yell, Say, or Guild chat.
+DingClassic is a World of Warcraft Classic addon that announces level-ups in a fun and customizable way. It provides options to show ding messages, send them to Say or Guild chat.
 Installation
 
     Download the Addon:
