@@ -8,6 +8,7 @@ DingClassicSettings = {
     showDingMessages = true,
     sendToSay = true,
     sendToGuild = true,
+    messageSent = {},
     selectedMessagePool = "Default"
 }
 
@@ -15,6 +16,7 @@ local messagePoolDescriptions = {
     Default = "The default pool of ding messages.",
     WoWHardCore = "Hardcore-themed ding messages for the ultimate leveling experience.",
     WoWFunny = "Funny and lighthearted ding messages for a good laugh while leveling.",
+    WoWLore = "Discover bite-sized tales, lore snippets, and legendary quotes from the vast world of Azeroth.",
 }
 
 -- Define arrays of different ding messages
@@ -205,6 +207,68 @@ local messagePools = {
         "Ding! Level %d! My character's leveling speed is faster than a gnome tinkering with explosives.",
         "Ding! Level %d! My character is now so legendary, even the loading screen admires them.",
     },
+    WoWLore = {
+        "Ding! Level %d! Just like Thrall, I've risen from the ashes to face the challenges of Azeroth!",
+        "Ding! Level %d! I'm channeling my inner Arthas as I march towards max level and beyond.",
+        "Ding! Level %d! Like Jaina, I'll stand proud and strong as I progress through Azeroth's trials.",
+        "Ding! Level %d! My journey echoes the lore of Illidan Stormrage, embracing power and sacrifice.",
+        "Ding! Level %d! I feel the spirit of Uther the Lightbringer guiding me on this path of leveling.",
+        "Ding! Level %d! Just like Sylvanas, I'm making my mark in this world, one level at a time.",
+        "Ding! Level %d! Much like Malfurion Stormrage, I'm attuned to the natural flow of leveling.",
+        "Ding! Level %d! My leveling journey mirrors the rise of the noble Cairne Bloodhoof.",
+        "Ding! Level %d! My determination rivals that of Grom Hellscream, charging into the levels ahead.",
+        "Ding! Level %d! As a true disciple of the Light, I'm leveling up with the grace of Turalyon.",
+        "Ding! Level %d! Like the defiant Varian Wrynn, I stand steadfast in my leveling journey.",
+        "Ding! Level %d! My determination matches that of Maiev Shadowsong as I progress in levels.",
+        "Ding! Level %d! Much like Khadgar, I seek knowledge and power in the form of leveling up.",
+        "Ding! Level %d! My leveling path is reminiscent of the heroic deeds of Anduin Lothar.",
+        "Ding! Level %d! Embracing the fire within, I level up with the spirit of Ragnaros.",
+        "Ding! Level %d! My leveling journey is a saga worthy of the high chieftain Vol'jin.",
+        "Ding! Level %d! Just like the cunning Gul'dan, I'm mastering the levels through intellect and strategy.",
+        "Ding! Level %d! I feel the pulse of the Emerald Dream as I level up, much like Ysera.",
+        "Ding! Level %d! My leveling journey is a reflection of the fierce warrior Saurfang the Younger.",
+        "Ding! Level %d! My leveling path is as legendary as the ancient dragon, Alexstrasza.",
+        "Ding! Level %d! I channel the spirit of Jaina Proudmoore as I navigate the levels of Azeroth.",
+        "Ding! Level %d! My leveling journey echoes the wisdom of the Prophet Velen.",
+        "Ding! Level %d! Just like the legendary Deathwing, I'm causing tremors in the leveling world.",
+        "Ding! Level %d! My journey through Azeroth's levels mirrors the vengeance of Akama.",
+        "Ding! Level %d! Like Cenarius, I guide my path through leveling with nature's grace.",
+        "Ding! Level %d! My leveling adventure is as daring as the deeds of Tirion Fordring.",
+        "Ding! Level %d! My leveling journey is a reflection of the resilience of Genn Greymane.",
+        "Ding! Level %d! My determination is akin to the bravery of Varok Saurfang.",
+        "Ding! Level %d! Like the wise Chen Stormstout, I'm leveling up with jovial determination.",
+        "Ding! Level %d! My path through the levels is as iconic as the legendary Medivh.",
+        "Ding! Level %d! My leveling journey is a tribute to the legacy of Archmage Antonidas.",
+        "Ding! Level %d! My leveling adventure is as enigmatic as the whispers of N'Zoth.",
+        "Ding! Level %d! My leveling path mirrors the strategic prowess of Khadgar.",
+        "Ding! Level %d! My journey echoes the resilience of the Earthen Ring.",
+        "Ding! Level %d! I level up with the wisdom of the mighty Archimonde.",
+        "Ding! Level %d! My leveling adventure is a testament to the grit of the Warchief.",
+        "Ding! Level %d! I channel the essence of the Dragon Aspects in my leveling journey.",
+        "Ding! Level %d! My leveling journey is as fierce as the determination of Grommash Hellscream.",
+        "Ding! Level %d! My leveling path is akin to the strength of Cairne Bloodhoof.",
+        "Ding! Level %d! Like the legendary Aegwynn, I wield the arcane to level up.",
+        "Ding! Level %d! My journey mirrors the might of the ancient Thunderaan, Prince of Air.",
+        "Ding! Level %d! My leveling adventure is as legendary as the story of the Ashbringer.",
+        "Ding! Level %d! I'm leveling up with the tenacity of the mighty Thoradin.",
+        "Ding! Level %d! My path through the levels echoes the lore of the Scarlet Crusade.",
+        "Ding! Level %d! My leveling journey is as bold as the tale of The Dark Portal.",
+        "Ding! Level %d! I channel the wisdom of the ancients, much like Fandral Staghelm.",
+        "Ding! Level %d! Like the resilient Kalecgos, I rise and conquer the levels.",
+        "Ding! Level %d! My leveling journey is a tribute to the honor of the Kaldorei.",
+        "Ding! Level %d! My leveling adventure mirrors the strength of the mighty Turalyon.",
+        "Ding! Level %d! My path through the levels is as noble as the story of Aegwynn.",
+        "Ding! Level %d! Like the cunning Blackhand, I dominate the leveling world.",
+        "Ding! Level %d! I'm leveling up with the zeal of the Scarlet Crusade.",
+        "Ding! Level %d! My leveling journey echoes the legendary tales of the Titans.",
+        "Ding! Level %d! My adventure is as mysterious as the whispers of the Old Gods.",
+        "Ding! Level %d! My leveling path is as bold as the mighty Khaz'goroth.",
+        "Ding! Level %d! My journey is akin to the tales of the legendary Lo'Gosh.",
+        "Ding! Level %d! My leveling adventure mirrors the legendary tales of the Titans.",
+        "Ding! Level %d! My path through the levels is as enigmatic as the history of Elune.",
+        "Ding! Level %d! I'm leveling up with the resilience of the legendary Gnomeregan.",
+        "Ding! Level %d! My leveling journey is as legendary as the ancient Tirisfal Glades.",
+    },
 
 }
 
@@ -238,10 +302,14 @@ local function SendRandomMessage()
     end
 end
 
+local frame = CreateFrame("Frame")
+
+-- Function to handle player level up
 local function OnPlayerLevelUp(self, event, arg1)
     local level = arg1
 
-    if DingClassicSettings.showDingMessages then
+    -- Check if a message has been sent for this level
+    if not DingClassicSettings.messageSent[level] then
         local selectedPool = messagePools[DingClassicSettings.selectedMessagePool]
         if selectedPool then
             local numMessages = #selectedPool
@@ -250,13 +318,18 @@ local function OnPlayerLevelUp(self, event, arg1)
                 local message = selectedPool[randomIndex]
                 message = string.format(message, level)
 
+                -- Check if should send to SAY
                 if DingClassicSettings.sendToSay then
                     SendChatMessage(message, "SAY")
                 end
 
+                -- Check if should send to GUILD
                 if DingClassicSettings.sendToGuild then
                     SendChatMessage(message, "GUILD")
                 end
+
+                -- Set the flag indicating a message has been sent for this level
+                DingClassicSettings.messageSent[level] = true
             else
                 print("No messages found in the selected pool.")
             end
@@ -266,8 +339,21 @@ local function OnPlayerLevelUp(self, event, arg1)
     end
 end
 
-DingClassicFrame:RegisterEvent("PLAYER_LEVEL_UP")
-DingClassicFrame:SetScript("OnEvent", OnPlayerLevelUp)
+frame:RegisterEvent("PLAYER_LEVEL_UP")
+frame:SetScript("OnEvent", function(self, event, ...)
+    if event == "PLAYER_LEVEL_UP" then
+        OnPlayerLevelUp(self, event, ...)
+    end
+end)
+
+local function SaveDingClassicSettings()
+    -- Save the settings
+    DingClassicSavedSettings = DingClassicSettings
+
+    -- Add this line to save the messageSent flag
+    DingClassicSavedSettings.messageSent = DingClassicSettings.messageSent
+end
+
 
 local function InitializeOptionsPanel()
     if optionsPanelInitialized then
@@ -414,6 +500,9 @@ local function LoadDingClassic()
             DingClassicSettings = DingClassicSavedSettings
         end
 
+        -- Initialize the messageSent flag for each level
+        DingClassicSettings.messageSent = {}
+
         InitializeOptionsPanel()
         isAddonLoaded = true
         print(addonName .. " is loaded!")
@@ -430,7 +519,17 @@ local f = CreateFrame("Frame")
 f:RegisterEvent("ADDON_LOADED")
 f:SetScript("OnEvent", OnEvent)
 
+-- Define your slash commands
 SLASH_DINGCLASSIC1 = "/dingclassic"
-SlashCmdList["DINGCLASSIC"] = function()
+SLASH_DINGCLASSIC2 = "/ding"
+SLASH_DINGCLASSIC3 = "/dc"
+
+-- Function to open the Ding Classic options window
+local function OpenDingClassicOptions()
     InterfaceOptionsFrame_OpenToCategory("Ding Classic")
 end
+
+-- Assign the function to the slash commands
+SlashCmdList["DINGCLASSIC"] = OpenDingClassicOptions
+SlashCmdList["DING"] = OpenDingClassicOptions
+SlashCmdList["dc"] = OpenDingClassicOptions
