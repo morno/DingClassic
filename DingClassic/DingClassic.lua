@@ -1,6 +1,5 @@
 local addonName = "DingClassic"
 local ding_version = "1.0.6"
-local max_level = 60
 local isAddonLoaded = false  -- Variable to track if the addon has been loaded
 
 -- Initialize the settings table
