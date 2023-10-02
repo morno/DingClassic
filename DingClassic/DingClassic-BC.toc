@@ -1,0 +1,10 @@
+## Interface: 20501
+## Title: Ding Classic
+## Notes: Announces in guild chat and say when you ding!
+## Author: Morno (Holymorno on Stitches)
+## Version: 1.0.6
+## Dependencies:
+## SavedVariables: DingClassicSavedSettings
+## SavedVariablesPerCharacter:
+DingClassic.lua
+DingClassic.xml

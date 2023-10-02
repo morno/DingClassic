@@ -1,5 +1,5 @@
 local addonName = "DingClassic"
-local ding_version = "1.0.5"
+local ding_version = "1.0.6"
 local max_level = 60
 local isAddonLoaded = false  -- Variable to track if the addon has been loaded
 
@@ -17,6 +17,7 @@ local messagePoolDescriptions = {
     WoWHardCore = "Hardcore-themed ding messages for the ultimate leveling experience.",
     WoWFunny = "Funny and lighthearted ding messages for a good laugh while leveling.",
     WoWLore = "Discover bite-sized tales, lore snippets, and legendary quotes from the vast world of Azeroth.",
+    WoWSuperFunny = "Happy leveling and laughing in your WoW adventures!",
 }
 
 -- Define arrays of different ding messages
@@ -269,7 +270,68 @@ local messagePools = {
         "Ding! Level %d! I'm leveling up with the resilience of the legendary Gnomeregan.",
         "Ding! Level %d! My leveling journey is as legendary as the ancient Tirisfal Glades.",
     },
-
+    WoWSuperFunny = {
+        "Ding! Level %d! My mom is so proud, she's putting it on the fridge!",
+        "Ding! Level %d! I'd like to thank my guild, my pet cat, and my mom's basement.",
+        "Ding! Level %d! I'm not addicted, I'm just... well, maybe a little.",
+        "Ding! Level %d! My character is now eligible for 'Azeroth's Next Top Model.'",
+        "Ding! Level %d! I've leveled up so much, my /played time has a Ph.D.",
+        "Ding! Level %d! Even Hogger is afraid of my leveling skills.",
+        "Ding! Level %d! My character is now maxed out in 'Dingology.'",
+        "Ding! Level %d! I think my character just wrote a bestseller, 'Leveling for Dummies.'",
+        "Ding! Level %d! My character has more levels than I have gold... and that's saying something.",
+        "Ding! Level %d! My character is so epic, even the Murlocs fear them.",
+        "Ding! Level %d! My character is now so legendary, they have a fan club in Orgrimmar.",
+        "Ding! Level %d! I've leveled up so much, I've lost count... literally.",
+        "Ding! Level %d! I think I just out-leveled Deathwing's temper.",
+        "Ding! Level %d! My character's leveling speed is faster than a gnome on a rocket.",
+        "Ding! Level %d! My character is so powerful, they defeat mobs by glaring at them.",
+        "Ding! Level %d! I've spent more time leveling than I have sleeping.",
+        "Ding! Level %d! My character's leveling speed is faster than a warlock summoning a demon.",
+        "Ding! Level %d! I think my character needs a level-up intervention.",
+        "Ding! Level %d! My character is so maxed out, even Ragnaros wants tips.",
+        "Ding! Level %d! My character is so buffed, they can one-shot a murloc with a finger poke.",
+        "Ding! Level %d! I've leveled up more times than I've had hot dinners.",
+        "Ding! Level %d! My character's leveling speed is faster than a rogue trying to stealth.",
+        "Ding! Level %d! I'd like to thank the pizza delivery guy for fueling this leveling marathon.",
+        "Ding! Level %d! My character is now max level and ready to tackle... more leveling.",
+        "Ding! Level %d! I've leveled up so much, I've forgotten what sunlight looks like.",
+        "Ding! Level %d! My character is so legendary, even the NPCs ask for selfies.",
+        "Ding! Level %d! My character's leveling speed is faster than a druid in cheetah form.",
+        "Ding! Level %d! I've leveled up so much, even my pet boar is impressed.",
+        "Ding! Level %d! My character is so buffed, they can take on the Lich King... in their sleep.",
+        "Ding! Level %d! I've leveled up so much, I think my character is considering retirement in Dalaran.",
+        "Ding! Level %d! My character is so good, even Illidan is taking notes.",
+        "Ding! Level %d! I think I've leveled up more times than I've heard 'Leroy Jenkins'.",
+        "Ding! Level %d! My character is now so epic, they have their own theme music.",
+        "Ding! Level %d! I've leveled up so much, my character is planning to open a leveling school.",
+        "Ding! Level %d! My character is so maxed out, even the dragons are applying for leveling tips.",
+        "Ding! Level %d! My character is so legendary, they have a legendary cereal named after them.",
+        "Ding! Level %d! I think my character has a level-up addiction, and I'm an enabler.",
+        "Ding! Level %d! My character's leveling speed is faster than a gnome with a jetpack.",
+        "Ding! Level %d! I've leveled up so much, I'm considering writing a 'Leveling for Dummies' book.",
+        "Ding! Level %d! My character is so good, even Deathwing bowed down in respect.",
+        "Ding! Level %d! My character's leveling speed is faster than a rogue looting in a crowded city.",
+        "Ding! Level %d! I've leveled up more times than I've lost in PvP... and that's saying something.",
+        "Ding! Level %d! My character is so buffed, even the NPCs ask for workout tips.",
+        "Ding! Level %d! I've leveled up so much, my character's XP bar has its own gravitational pull.",
+        "Ding! Level %d! My character is so legendary, even Ragnaros wants their autograph.",
+        "Ding! Level %d! I think my character's leveling speed broke the sound barrier.",
+        "Ding! Level %d! My character is so good, they've been asked to write a 'Leveling for Dummies' book.",
+        "Ding! Level %d! My character is so maxed out, even the Loading Screen Tips are impressed.",
+        "Ding! Level %d! I've leveled up so much, even the bosses are planning a congratulatory party.",
+        "Ding! Level %d! My character is now so powerful, they defeat monsters with a stern look.",
+        "Ding! Level %d! My character is so legendary, they have their own sitcom in Gadgetzan.",
+        "Ding! Level %d! My character is so epic, even the Titans are taking notice.",
+        "Ding! Level %d! I've leveled up so much, even the game developers are asking for my secrets.",
+        "Ding! Level %d! My character is so maxed out, they can solo a raid while juggling gnome plushies.",
+        "Ding! Level %d! My character is so good, they've been asked to teach a 'Leveling 101' class.",
+        "Ding! Level %d! My character is now so epic, they defeat raid bosses with sarcastic remarks.",
+        "Ding! Level %d! My character's leveling speed is faster than a warlock summoning imp.",
+        "Ding! Level %d! My character is so legendary, they've been nominated for a Nobel Prize in Levelology.",
+        "Ding! Level %d! My character is now max level, max coolness, and max procrastination.",
+        "Ding! Level %d! My character is so legendary, even the loading screen worships them.",
+    },
 }
 
 local DingClassicFrame = CreateFrame("Frame")
