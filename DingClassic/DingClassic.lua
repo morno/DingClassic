@@ -528,6 +528,9 @@ local function InitializeOptionsPanel()
     saveButton:SetScript("OnLeave", function()
         GameTooltip:Hide()
     end)
+	saveButton:SetScript("OnClick", function()
+        SaveDingClassicSettings()
+    end)
 
     -- Modify the test button creation to add a tooltip
     local testButton = CreateFrame("Button", "$parentTestButton", optionsPanel, "UIPanelButtonTemplate")
