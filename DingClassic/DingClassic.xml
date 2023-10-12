@@ -1,9 +1,6 @@
 <Ui xmlns="http://www.w3.org/2001/XMLSchema-instance">
     <Script file="DingClassic.lua"/>
-    <Frame name="DingClassicOptionsPanel" parent="InterfaceOptionsPanelTemplate">
-        <Scripts>
-            <OnLoad function="DingClassicOptionsPanel_OnLoad"/>
-        </Scripts>
+    <Frame name="DingClassicOptionsPanel">        
         <CheckButton name="DingClassicOptionsPanelCheckbox" inherits="InterfaceOptionsCheckButtonTemplate">
             <Anchors>
                 <Anchor point="TOPLEFT" relativeTo="$parent" relativePoint="TOPLEFT" x="10" y="-10"/>
