@@ -7,6 +7,7 @@ DingClassicSettings = {
     showDingMessages = true,
     sendToSay = true,
     sendToGuild = true,
+    sendToParty = true,
     messageSent = {},
     selectedMessagePool = "Default"
 }
@@ -355,6 +356,11 @@ local function SendRandomMessage()
             if DingClassicSettings.sendToGuild then
                 SendChatMessage(message, "GUILD")
             end
+
+            -- Send to party if enabled
+            if DingClassicSettings.sendToParty then
+                SendChatMessage(message, "PARTY")
+            end
         else
             print("No messages found in the selected pool.")
         end
@@ -366,37 +372,36 @@ end
 local frame = CreateFrame("Frame")
 
 -- Function to handle player level up
-local function OnPlayerLevelUp(self, event, arg1)
-    local level = arg1
+local function SendRandomMessage()
+    local selectedPool = messagePools[DingClassicSettings.selectedMessagePool]
+    if selectedPool then
+        local numMessages = #selectedPool
+        if numMessages > 0 then
+            local randomIndex = math.random(1, numMessages)
+            local message = selectedPool[randomIndex]
+            local characterLevel = UnitLevel("player")
+            message = string.format(message, characterLevel)
+            -- print("Sending message:", message)  -- Debug: Print the message to be sent
 
-    -- Check if a message has been sent for this level
-    if not DingClassicSettings.messageSent[level] then
-        local selectedPool = messagePools[DingClassicSettings.selectedMessagePool]
-        if selectedPool then
-            local numMessages = #selectedPool
-            if numMessages > 0 then
-                local randomIndex = math.random(1, numMessages)
-                local message = selectedPool[randomIndex]
-                message = string.format(message, level)
+            -- Check if the "Send to Say" option is enabled and send the message to SAY channel
+            if DingClassicSettings.sendToSay then
+                SendChatMessage(message, "SAY")
+            end
 
-                -- Check if should send to SAY
-                if DingClassicSettings.sendToSay then
-                    SendChatMessage(message, "SAY")
-                end
+            -- Check if the "Send to Guild" option is enabled and send the message to GUILD channel
+            if DingClassicSettings.sendToGuild then
+                SendChatMessage(message, "GUILD")
+            end
 
-                -- Check if should send to GUILD
-                if DingClassicSettings.sendToGuild then
-                    SendChatMessage(message, "GUILD")
-                end
-
-                -- Set the flag indicating a message has been sent for this level
-                DingClassicSettings.messageSent[level] = true
-            else
-                print("No messages found in the selected pool.")
+            -- Send to party if enabled
+            if DingClassicSettings.sendToParty then
+                SendChatMessage(message, "PARTY")
             end
         else
-            print("Selected message pool not found.")
+            print("No messages found in the selected pool.")
         end
+    else
+        print("Selected message pool not found.")
     end
 end
 
@@ -511,6 +516,27 @@ local function InitializeOptionsPanel()
 
     checkboxGuild:SetScript("OnClick", function(self)
         DingClassicSettings.sendToGuild = self:GetChecked()
+    end)
+
+    -- Create the "Send to Party" checkbox
+    local checkboxParty = CreateFrame("CheckButton", "$parentCheckboxParty", optionsPanel, "InterfaceOptionsCheckButtonTemplate")
+    checkboxParty:SetPoint("TOPLEFT", checkbox, "BOTTOMLEFT", 0, -10)
+    checkboxParty.Text:SetText("Send to Party")
+    checkboxParty:SetChecked(DingClassicSettings.sendToParty)
+
+    -- Add a tooltip for the "Send to Party" checkbox
+    checkboxParty.tooltipText = "Send ding messages to the party chat channel."
+    checkboxParty:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetText(self.tooltipText, 1, 1, 1, nil, true)
+        GameTooltip:Show()
+    end)
+    checkboxParty:SetScript("OnLeave", function()
+        GameTooltip:Hide()
+    end)
+
+    checkboxParty:SetScript("OnClick", function(self)
+        DingClassicSettings.sendToParty = self:GetChecked()
     end)
 
     -- Add a tooltip for the save button
