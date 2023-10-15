@@ -259,10 +259,37 @@ local messagePools = {
     },
 
 }
--- Tracks if the quest dialog is open
-local questDialogOpen = false
 
-local DingClassicFrame = CreateFrame("Frame")
+local questDialogOpen = false
+local delayedDingMessage = nil
+local inCombat = false
+local messageQueue = {}
+
+local function SendDelayedMessages()
+    for _, delayedMessage in ipairs(messageQueue) do
+        if DingClassicSettings.sendToSay then
+            SendChatMessage(delayedMessage, "SAY")
+        end
+
+        if DingClassicSettings.sendToGuild then
+            SendChatMessage(delayedMessage, "GUILD")
+        end
+
+        if DingClassicSettings.sendToParty then
+            SendChatMessage(delayedMessage, "PARTY")
+        end
+    end
+
+    wipe(messageQueue)
+end
+
+local function SendDelayedDingMessage(message)
+    if InCombatLockdown() then
+        table.insert(messageQueue, message)
+    else
+        SendDelayedMessages()
+    end
+end
 
 local function SendRandomMessage(characterLevel)
     if DingClassicSettings.messageSent[characterLevel] then
@@ -275,28 +302,18 @@ local function SendRandomMessage(characterLevel)
         local numMessages = #selectedPool
         if numMessages > 0 then
             local randomIndex = math.random(1, numMessages)
-            local message = selectedPool[randomIndex]
-            message = string.format(message, characterLevel)
+            local delayedDingMessage = string.format(selectedPool[randomIndex], characterLevel)
 
             -- Delay sending the ding message if the quest dialog is open
             if questDialogOpen then
                 C_Timer.After(1, function()
-                    SendRandomMessage(characterLevel)
+                    SendDelayedDingMessage(delayedDingMessage)
                 end)
                 return
             end
 
-            if DingClassicSettings.sendToSay then
-                SendChatMessage(message, "SAY")
-            end
-
-            if DingClassicSettings.sendToGuild then
-                SendChatMessage(message, "GUILD")
-            end
-
-            if DingClassicSettings.sendToParty then
-                SendChatMessage(message, "PARTY")
-            end
+            -- Send the delayed ding message
+            SendDelayedDingMessage(delayedDingMessage)
 
             DingClassicSettings.messageSent[characterLevel] = true
         else
@@ -315,17 +332,27 @@ end
 -- Function to handle the quest dialog closing
 local function OnQuestComplete()
     questDialogOpen = false
+
+    -- Send the delayed ding message if available
+    SendDelayedMessages()
 end
 
--- Register events for quest dialog handling
+-- Register events for quest dialog handling and combat status
 local f = CreateFrame("Frame")
 f:RegisterEvent("QUEST_DETAIL")
 f:RegisterEvent("QUEST_COMPLETE")
+f:RegisterEvent("PLAYER_REGEN_DISABLED")
+f:RegisterEvent("PLAYER_REGEN_ENABLED")
 f:SetScript("OnEvent", function(self, event, ...)
     if event == "QUEST_DETAIL" then
         OnQuestDetail()
     elseif event == "QUEST_COMPLETE" then
         OnQuestComplete()
+    elseif event == "PLAYER_REGEN_DISABLED" then
+        inCombat = true
+    elseif event == "PLAYER_REGEN_ENABLED" then
+        inCombat = false
+        SendDelayedMessages()
     end
 end)
 
