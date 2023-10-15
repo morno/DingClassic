@@ -17,6 +17,7 @@ local messagePoolDescriptions = {
     WoWHardCore = "Hardcore-themed ding messages for the ultimate leveling experience.",
     WoWFunny = "Funny and lighthearted ding messages for a good laugh while leveling.",
     WoWLore = "Discover bite-sized tales, lore snippets, and legendary quotes from the vast world of Azeroth.",
+    WoWWarlock = "Warlocky leveling messages",
 }
 
 -- Define arrays of different ding messages
@@ -50,10 +51,8 @@ local messagePools = {
         "Ding! Level %d! My character is so overpowered, even Chuck Norris asks for tips.",
         "Ding! Level %d! My character is so epic, they can even butter toast perfectly.",
         "Ding! Level %d! My character is now old enough to vote in Azeroth.",
-        "Ding! Level %d! I've spent more time leveling than I have at family gatherings.",
         "Ding! Level %d! My character's Tinder profile just got a lot more impressive.",
         "Ding! Level %d! My character is so fit from all this leveling, even the NPCs are mirin'.",
-        "Ding! Level %d! I've achieved the level of procrastination master.",
         "Ding! Level %d! I've probably defeated more dragons than all medieval knights combined.",
         "Ding! Level %d! If only I could level up my cooking skills as fast as my character.",
         "Ding! Level %d! My character is leveling faster than my plants are growing.",
@@ -67,7 +66,6 @@ local messagePools = {
         "Ding! Level %d! I'd like to thank my coffee maker for keeping me awake on this journey.",
         "Ding! Level %d! My character is leveling up faster than my bank account is depleting.",
         "Ding! Level %d! I may not have a real job, but I'm %d level in a fantasy world!",
-        "Ding! Level %d! I've reached the level where I can procrastinate even more effectively.",
         "Ding! Level %d! I'm not addicted; I just have an intense dedication to my virtual self.",
         "Ding! Level %d! My character is now officially better at life than I am.",
         "Ding! Level %d! I'd like to thank my pizza delivery guy for sustaining me through this journey.",
@@ -78,7 +76,6 @@ local messagePools = {
         "Ding! Level %d! At this point, I think my character deserves a virtual Ph.D.",
         "Ding! Level %d! I've spent more time in Azeroth than I have in my own hometown.",
         "Ding! Level %d! My character is so legendary, even NPCs ask for autographs.",
-        "Ding! Level %d! I've reached the level where I can procrastinate professionally.",
         "Ding! Level %d! My character's leveling speed could break the space-time continuum.",
         "Ding! Level %d! My character is so buffed, even Hercules asked for workout tips.",
         "Ding! Level %d! I've spent more time leveling than I have sleeping... and that's saying something.",
@@ -176,7 +173,6 @@ local messagePools = {
         "Ding! Level %d! My character has leveled up so much, they're considering starting a 'Levelers Anonymous' group.",
         "Ding! Level %d! My character is so legendary, they have a theme song composed in their honor.",
         "Ding! Level %d! My character's leveling speed is faster than a rogue pickpocketing in a crowded Stormwind.",
-        "Ding! Level %d! My character is so buffed, they could flex the Exodar into orbit.",
         "Ding! Level %d! My character has more levels than a multi-story gnome engineering project.",
         "Ding! Level %d! My character's leveling speed is faster than a druid shifting forms.",
         "Ding! Level %d! My character is now so epic, even the NPCs roll out the red carpet.",
@@ -248,11 +244,26 @@ local messagePools = {
         "Ding! Level %d! I'm leveling up with the resilience of the legendary Gnomeregan.",
         "Ding! Level %d! My leveling journey is as legendary as the ancient Tirisfal Glades.",
     },
+
+    WoWWarlock = {
+        "Ding! Level %d! My demons are starting to consider me a role model.",
+        "Ding! Level %d! More levels, more souls to harvest. Business is booming!",
+        "Ding! Level %d! I've reached a level where my fire spells make Sargeras jealous.",
+        "Ding! Level %d! My curses are now so potent, even the Lich King is envious.",
+        "Ding! Level %d! My demons have informed me that I'm now their favorite summoner.",
+        "Ding! Level %d! I'm leveling up faster than I can say 'summon doomguard.'",
+        "Ding! Level %d! My shadowbolts now come with free Wi-Fi for added destruction!",
+        "Ding! Level %d! My fel fire is now certified to be 100% demonic and 200% terrifying.",
+        "Ding! Level %d! I've leveled up so much, even Kil'jaeden is taking notes.",
+        "Ding! Level %d! My curses are now so powerful, even the Boogeyman checks under his bed.",
+    },
+
 }
+-- Tracks if the quest dialog is open
+local questDialogOpen = false
 
 local DingClassicFrame = CreateFrame("Frame")
 
--- Consolidate the message sending logic into a single function
 local function SendRandomMessage(characterLevel)
     if DingClassicSettings.messageSent[characterLevel] then
         print("Ding message for level " .. characterLevel .. " has already been sent.")
@@ -266,6 +277,14 @@ local function SendRandomMessage(characterLevel)
             local randomIndex = math.random(1, numMessages)
             local message = selectedPool[randomIndex]
             message = string.format(message, characterLevel)
+
+            -- Delay sending the ding message if the quest dialog is open
+            if questDialogOpen then
+                C_Timer.After(1, function()
+                    SendRandomMessage(characterLevel)
+                end)
+                return
+            end
 
             if DingClassicSettings.sendToSay then
                 SendChatMessage(message, "SAY")
@@ -287,6 +306,28 @@ local function SendRandomMessage(characterLevel)
         print("Selected message pool not found.")
     end
 end
+
+-- Function to handle the quest dialog opening
+local function OnQuestDetail()
+    questDialogOpen = true
+end
+
+-- Function to handle the quest dialog closing
+local function OnQuestComplete()
+    questDialogOpen = false
+end
+
+-- Register events for quest dialog handling
+local f = CreateFrame("Frame")
+f:RegisterEvent("QUEST_DETAIL")
+f:RegisterEvent("QUEST_COMPLETE")
+f:SetScript("OnEvent", function(self, event, ...)
+    if event == "QUEST_DETAIL" then
+        OnQuestDetail()
+    elseif event == "QUEST_COMPLETE" then
+        OnQuestComplete()
+    end
+end)
 
 local function SaveDingClassicSettings()
     -- Save the settings
