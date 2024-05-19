@@ -2,7 +2,7 @@
 ## Title: Ding Classic
 ## Notes: Announces in guild chat and say when you ding!
 ## Author: Morno (Holymorno on Stitches)
-## Version: 1.0.6
+## Version: 1.0.7
 ## Dependencies:
 ## SavedVariables: DingClassicSavedSettings
 ## SavedVariablesPerCharacter:

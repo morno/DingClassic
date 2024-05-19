@@ -1,23 +1,29 @@
 local addonName = "DingClassic"
---local ding_version = "1.0.6"
+local ding_version = "1.0.6"
+local max_level = 60
 local isAddonLoaded = false  -- Variable to track if the addon has been loaded
 
--- Initialize the settings table
-DingClassicSettings = {
-    showDingMessages = true,
-    sendToSay = true,
-    sendToGuild = true,
-    sendToParty = true,
-    messageSent = {},
-    selectedMessagePool = "Default"
-}
+-- Function to initialize the settings
+local function InitializeSettings()
+    if not DingClassicSavedSettings then
+        DingClassicSavedSettings = {
+            showDingMessages = true,
+            sendToSay = true,
+            sendToGuild = true,
+            messageSent = {},
+            selectedMessagePool = "Default"
+        }
+    end
+    -- Copy saved settings to the current settings table
+    DingClassicSettings = DingClassicSavedSettings
+end
 
 local messagePoolDescriptions = {
     Default = "The default pool of ding messages.",
     WoWHardCore = "Hardcore-themed ding messages for the ultimate leveling experience.",
     WoWFunny = "Funny and lighthearted ding messages for a good laugh while leveling.",
     WoWLore = "Discover bite-sized tales, lore snippets, and legendary quotes from the vast world of Azeroth.",
-    WoWWarlock = "Warlocky leveling messages",
+    WoWSuperFunny = "Happy leveling and laughing in your WoW adventures!",
 }
 
 -- Define arrays of different ding messages
@@ -51,8 +57,10 @@ local messagePools = {
         "Ding! Level %d! My character is so overpowered, even Chuck Norris asks for tips.",
         "Ding! Level %d! My character is so epic, they can even butter toast perfectly.",
         "Ding! Level %d! My character is now old enough to vote in Azeroth.",
+        "Ding! Level %d! I've spent more time leveling than I have at family gatherings.",
         "Ding! Level %d! My character's Tinder profile just got a lot more impressive.",
         "Ding! Level %d! My character is so fit from all this leveling, even the NPCs are mirin'.",
+        "Ding! Level %d! I've achieved the level of procrastination master.",
         "Ding! Level %d! I've probably defeated more dragons than all medieval knights combined.",
         "Ding! Level %d! If only I could level up my cooking skills as fast as my character.",
         "Ding! Level %d! My character is leveling faster than my plants are growing.",
@@ -66,6 +74,7 @@ local messagePools = {
         "Ding! Level %d! I'd like to thank my coffee maker for keeping me awake on this journey.",
         "Ding! Level %d! My character is leveling up faster than my bank account is depleting.",
         "Ding! Level %d! I may not have a real job, but I'm %d level in a fantasy world!",
+        "Ding! Level %d! I've reached the level where I can procrastinate even more effectively.",
         "Ding! Level %d! I'm not addicted; I just have an intense dedication to my virtual self.",
         "Ding! Level %d! My character is now officially better at life than I am.",
         "Ding! Level %d! I'd like to thank my pizza delivery guy for sustaining me through this journey.",
@@ -76,6 +85,7 @@ local messagePools = {
         "Ding! Level %d! At this point, I think my character deserves a virtual Ph.D.",
         "Ding! Level %d! I've spent more time in Azeroth than I have in my own hometown.",
         "Ding! Level %d! My character is so legendary, even NPCs ask for autographs.",
+        "Ding! Level %d! I've reached the level where I can procrastinate professionally.",
         "Ding! Level %d! My character's leveling speed could break the space-time continuum.",
         "Ding! Level %d! My character is so buffed, even Hercules asked for workout tips.",
         "Ding! Level %d! I've spent more time leveling than I have sleeping... and that's saying something.",
@@ -173,6 +183,7 @@ local messagePools = {
         "Ding! Level %d! My character has leveled up so much, they're considering starting a 'Levelers Anonymous' group.",
         "Ding! Level %d! My character is so legendary, they have a theme song composed in their honor.",
         "Ding! Level %d! My character's leveling speed is faster than a rogue pickpocketing in a crowded Stormwind.",
+        "Ding! Level %d! My character is so buffed, they could flex the Exodar into orbit.",
         "Ding! Level %d! My character has more levels than a multi-story gnome engineering project.",
         "Ding! Level %d! My character's leveling speed is faster than a druid shifting forms.",
         "Ding! Level %d! My character is now so epic, even the NPCs roll out the red carpet.",
@@ -213,109 +224,148 @@ local messagePools = {
         "Ding! Level %d! Much like Malfurion Stormrage, I'm attuned to the natural flow of leveling.",
         "Ding! Level %d! My leveling journey mirrors the rise of the noble Cairne Bloodhoof.",
         "Ding! Level %d! My determination rivals that of Grom Hellscream, charging into the levels ahead.",
+        "Ding! Level %d! As a true disciple of the Light, I'm leveling up with the grace of Turalyon.",
+        "Ding! Level %d! Like the defiant Varian Wrynn, I stand steadfast in my leveling journey.",
         "Ding! Level %d! My determination matches that of Maiev Shadowsong as I progress in levels.",
         "Ding! Level %d! Much like Khadgar, I seek knowledge and power in the form of leveling up.",
         "Ding! Level %d! My leveling path is reminiscent of the heroic deeds of Anduin Lothar.",
         "Ding! Level %d! Embracing the fire within, I level up with the spirit of Ragnaros.",
+        "Ding! Level %d! My leveling journey is a saga worthy of the high chieftain Vol'jin.",
         "Ding! Level %d! Just like the cunning Gul'dan, I'm mastering the levels through intellect and strategy.",
         "Ding! Level %d! I feel the pulse of the Emerald Dream as I level up, much like Ysera.",
         "Ding! Level %d! My leveling journey is a reflection of the fierce warrior Saurfang the Younger.",
+        "Ding! Level %d! My leveling path is as legendary as the ancient dragon, Alexstrasza.",
         "Ding! Level %d! I channel the spirit of Jaina Proudmoore as I navigate the levels of Azeroth.",
+        "Ding! Level %d! My leveling journey echoes the wisdom of the Prophet Velen.",
         "Ding! Level %d! Just like the legendary Deathwing, I'm causing tremors in the leveling world.",
+        "Ding! Level %d! My journey through Azeroth's levels mirrors the vengeance of Akama.",
         "Ding! Level %d! Like Cenarius, I guide my path through leveling with nature's grace.",
         "Ding! Level %d! My leveling adventure is as daring as the deeds of Tirion Fordring.",
+        "Ding! Level %d! My leveling journey is a reflection of the resilience of Genn Greymane.",
         "Ding! Level %d! My determination is akin to the bravery of Varok Saurfang.",
         "Ding! Level %d! Like the wise Chen Stormstout, I'm leveling up with jovial determination.",
         "Ding! Level %d! My path through the levels is as iconic as the legendary Medivh.",
         "Ding! Level %d! My leveling journey is a tribute to the legacy of Archmage Antonidas.",
+        "Ding! Level %d! My leveling adventure is as enigmatic as the whispers of N'Zoth.",
         "Ding! Level %d! My leveling path mirrors the strategic prowess of Khadgar.",
+        "Ding! Level %d! My journey echoes the resilience of the Earthen Ring.",
         "Ding! Level %d! I level up with the wisdom of the mighty Archimonde.",
         "Ding! Level %d! My leveling adventure is a testament to the grit of the Warchief.",
         "Ding! Level %d! I channel the essence of the Dragon Aspects in my leveling journey.",
         "Ding! Level %d! My leveling journey is as fierce as the determination of Grommash Hellscream.",
         "Ding! Level %d! My leveling path is akin to the strength of Cairne Bloodhoof.",
+        "Ding! Level %d! Like the legendary Aegwynn, I wield the arcane to level up.",
+        "Ding! Level %d! My journey mirrors the might of the ancient Thunderaan, Prince of Air.",
         "Ding! Level %d! My leveling adventure is as legendary as the story of the Ashbringer.",
         "Ding! Level %d! I'm leveling up with the tenacity of the mighty Thoradin.",
         "Ding! Level %d! My path through the levels echoes the lore of the Scarlet Crusade.",
+        "Ding! Level %d! My leveling journey is as bold as the tale of The Dark Portal.",
+        "Ding! Level %d! I channel the wisdom of the ancients, much like Fandral Staghelm.",
+        "Ding! Level %d! Like the resilient Kalecgos, I rise and conquer the levels.",
+        "Ding! Level %d! My leveling journey is a tribute to the honor of the Kaldorei.",
+        "Ding! Level %d! My leveling adventure mirrors the strength of the mighty Turalyon.",
+        "Ding! Level %d! My path through the levels is as noble as the story of Aegwynn.",
+        "Ding! Level %d! Like the cunning Blackhand, I dominate the leveling world.",
+        "Ding! Level %d! I'm leveling up with the zeal of the Scarlet Crusade.",
         "Ding! Level %d! My leveling journey echoes the legendary tales of the Titans.",
         "Ding! Level %d! My adventure is as mysterious as the whispers of the Old Gods.",
+        "Ding! Level %d! My leveling path is as bold as the mighty Khaz'goroth.",
+        "Ding! Level %d! My journey is akin to the tales of the legendary Lo'Gosh.",
         "Ding! Level %d! My leveling adventure mirrors the legendary tales of the Titans.",
         "Ding! Level %d! My path through the levels is as enigmatic as the history of Elune.",
         "Ding! Level %d! I'm leveling up with the resilience of the legendary Gnomeregan.",
         "Ding! Level %d! My leveling journey is as legendary as the ancient Tirisfal Glades.",
     },
-
-    WoWWarlock = {
-        "Ding! Level %d! My demons are starting to consider me a role model.",
-        "Ding! Level %d! More levels, more souls to harvest. Business is booming!",
-        "Ding! Level %d! I've reached a level where my fire spells make Sargeras jealous.",
-        "Ding! Level %d! My curses are now so potent, even the Lich King is envious.",
-        "Ding! Level %d! My demons have informed me that I'm now their favorite summoner.",
-        "Ding! Level %d! I'm leveling up faster than I can say 'summon doomguard.'",
-        "Ding! Level %d! My shadowbolts now come with free Wi-Fi for added destruction!",
-        "Ding! Level %d! My fel fire is now certified to be 100% demonic and 200% terrifying.",
-        "Ding! Level %d! I've leveled up so much, even Kil'jaeden is taking notes.",
-        "Ding! Level %d! My curses are now so powerful, even the Boogeyman checks under his bed.",
+    WoWSuperFunny = {
+        "Ding! Level %d! My mom is so proud, she's putting it on the fridge!",
+        "Ding! Level %d! I'd like to thank my guild, my pet cat, and my mom's basement.",
+        "Ding! Level %d! I'm not addicted, I'm just... well, maybe a little.",
+        "Ding! Level %d! My character is now eligible for 'Azeroth's Next Top Model.'",
+        "Ding! Level %d! I've leveled up so much, my /played time has a Ph.D.",
+        "Ding! Level %d! Even Hogger is afraid of my leveling skills.",
+        "Ding! Level %d! My character is now maxed out in 'Dingology.'",
+        "Ding! Level %d! I think my character just wrote a bestseller, 'Leveling for Dummies.'",
+        "Ding! Level %d! My character has more levels than I have gold... and that's saying something.",
+        "Ding! Level %d! My character is so epic, even the Murlocs fear them.",
+        "Ding! Level %d! My character is now so legendary, they have a fan club in Orgrimmar.",
+        "Ding! Level %d! I've leveled up so much, I've lost count... literally.",
+        "Ding! Level %d! I think I just out-leveled Deathwing's temper.",
+        "Ding! Level %d! My character's leveling speed is faster than a gnome on a rocket.",
+        "Ding! Level %d! My character is so powerful, they defeat mobs by glaring at them.",
+        "Ding! Level %d! I've spent more time leveling than I have sleeping.",
+        "Ding! Level %d! My character's leveling speed is faster than a warlock summoning a demon.",
+        "Ding! Level %d! I think my character needs a level-up intervention.",
+        "Ding! Level %d! My character is so maxed out, even Ragnaros wants tips.",
+        "Ding! Level %d! My character is so buffed, they can one-shot a murloc with a finger poke.",
+        "Ding! Level %d! I've leveled up more times than I've had hot dinners.",
+        "Ding! Level %d! My character's leveling speed is faster than a rogue trying to stealth.",
+        "Ding! Level %d! I'd like to thank the pizza delivery guy for fueling this leveling marathon.",
+        "Ding! Level %d! My character is now max level and ready to tackle... more leveling.",
+        "Ding! Level %d! I've leveled up so much, I've forgotten what sunlight looks like.",
+        "Ding! Level %d! My character is so legendary, even the NPCs ask for selfies.",
+        "Ding! Level %d! My character's leveling speed is faster than a druid in cheetah form.",
+        "Ding! Level %d! I've leveled up so much, even my pet boar is impressed.",
+        "Ding! Level %d! My character is so buffed, they can take on the Lich King... in their sleep.",
+        "Ding! Level %d! I've leveled up so much, I think my character is considering retirement in Dalaran.",
+        "Ding! Level %d! My character is so good, even Illidan is taking notes.",
+        "Ding! Level %d! I think I've leveled up more times than I've heard 'Leroy Jenkins'.",
+        "Ding! Level %d! My character is now so epic, they have their own theme music.",
+        "Ding! Level %d! I've leveled up so much, my character is planning to open a leveling school.",
+        "Ding! Level %d! My character is so maxed out, even the dragons are applying for leveling tips.",
+        "Ding! Level %d! My character is so legendary, they have a legendary cereal named after them.",
+        "Ding! Level %d! I think my character has a level-up addiction, and I'm an enabler.",
+        "Ding! Level %d! My character's leveling speed is faster than a gnome with a jetpack.",
+        "Ding! Level %d! I've leveled up so much, I'm considering writing a 'Leveling for Dummies' book.",
+        "Ding! Level %d! My character is so good, even Deathwing bowed down in respect.",
+        "Ding! Level %d! My character's leveling speed is faster than a rogue looting in a crowded city.",
+        "Ding! Level %d! I've leveled up more times than I've lost in PvP... and that's saying something.",
+        "Ding! Level %d! My character is so buffed, even the NPCs ask for workout tips.",
+        "Ding! Level %d! I've leveled up so much, my character's XP bar has its own gravitational pull.",
+        "Ding! Level %d! My character is so legendary, even Ragnaros wants their autograph.",
+        "Ding! Level %d! I think my character's leveling speed broke the sound barrier.",
+        "Ding! Level %d! My character is so good, they've been asked to write a 'Leveling for Dummies' book.",
+        "Ding! Level %d! My character is so maxed out, even the Loading Screen Tips are impressed.",
+        "Ding! Level %d! I've leveled up so much, even the bosses are planning a congratulatory party.",
+        "Ding! Level %d! My character is now so powerful, they defeat monsters with a stern look.",
+        "Ding! Level %d! My character is so legendary, they have their own sitcom in Gadgetzan.",
+        "Ding! Level %d! My character is so epic, even the Titans are taking notice.",
+        "Ding! Level %d! I've leveled up so much, even the game developers are asking for my secrets.",
+        "Ding! Level %d! My character is so maxed out, they can solo a raid while juggling gnome plushies.",
+        "Ding! Level %d! My character is so good, they've been asked to teach a 'Leveling 101' class.",
+        "Ding! Level %d! My character is now so epic, they defeat raid bosses with sarcastic remarks.",
+        "Ding! Level %d! My character's leveling speed is faster than a warlock summoning imp.",
+        "Ding! Level %d! My character is so legendary, they've been nominated for a Nobel Prize in Levelology.",
+        "Ding! Level %d! My character is now max level, max coolness, and max procrastination.",
+        "Ding! Level %d! My character is so legendary, even the loading screen worships them.",
     },
-
 }
 
-local questDialogOpen = false
-local delayedDingMessage = nil
-local inCombat = false
-local messageQueue = {}
+local DingClassicFrame = CreateFrame("Frame")
 
-local function SendDelayedMessages()
-    for _, delayedMessage in ipairs(messageQueue) do
-        if DingClassicSettings.sendToSay then
-            SendChatMessage(delayedMessage, "SAY")
-        end
-
-        if DingClassicSettings.sendToGuild then
-            SendChatMessage(delayedMessage, "GUILD")
-        end
-
-        if DingClassicSettings.sendToParty then
-            SendChatMessage(delayedMessage, "PARTY")
-        end
-    end
-
-    wipe(messageQueue)
-end
-
-local function SendDelayedDingMessage(message)
-    if InCombatLockdown() then
-        table.insert(messageQueue, message)
-    else
-        SendDelayedMessages()
-    end
-end
-
-local function SendRandomMessage(characterLevel)
-    if DingClassicSettings.messageSent[characterLevel] then
-        print("Ding message for level " .. characterLevel .. " has already been sent.")
-        return
-    end
-
+local function SendRandomMessage()
     local selectedPool = messagePools[DingClassicSettings.selectedMessagePool]
     if selectedPool then
         local numMessages = #selectedPool
         if numMessages > 0 then
             local randomIndex = math.random(1, numMessages)
-            local delayedDingMessage = string.format(selectedPool[randomIndex], characterLevel)
+            local message = selectedPool[randomIndex]
+            local characterLevel = UnitLevel("player")
+            message = string.format(message, characterLevel)
 
-            -- Delay sending the ding message if the quest dialog is open
-            if questDialogOpen then
-                C_Timer.After(1, function()
-                    SendDelayedDingMessage(delayedDingMessage)
-                end)
-                return
+            -- Check if the "Send to Say" option is enabled and send the message to SAY channel
+            if DingClassicSettings.sendToSay then
+              SendChatMessage(message, "SAY")
             end
 
-            -- Send the delayed ding message
-            SendDelayedDingMessage(delayedDingMessage)
+            -- Check if the "Send to Guild" option is enabled and send the message to GUILD channel
+            if DingClassicSettings.sendToGuild then
+                SendChatMessage(message, "GUILD")
+            end
 
-            DingClassicSettings.messageSent[characterLevel] = true
+            -- Ensure at least one message is sent
+            if not DingClassicSettings.sendToSay and not DingClassicSettings.sendToGuild then
+                print("No message sent. Both 'Send to Say' and 'Send to Guild' options are disabled.")
+            end
         else
             print("No messages found in the selected pool.")
         end
@@ -324,35 +374,52 @@ local function SendRandomMessage(characterLevel)
     end
 end
 
--- Function to handle the quest dialog opening
-local function OnQuestDetail()
-    questDialogOpen = true
+local frame = CreateFrame("Frame")
+
+-- Function to handle player level up
+local function OnPlayerLevelUp(self, event, arg1)
+    local level = arg1
+
+    -- Check if a message has been sent for this level
+    if not DingClassicSettings.messageSent[level] then
+        local selectedPool = messagePools[DingClassicSettings.selectedMessagePool]
+        if selectedPool then
+            local numMessages = #selectedPool
+            if numMessages > 0 then
+                local randomIndex = math.random(1, numMessages)
+                local message = selectedPool[randomIndex]
+                message = string.format(message, level)
+
+                -- Check if should send to SAY
+                if DingClassicSettings.sendToSay then
+                    SendChatMessage(message, "SAY")
+                end
+
+                -- Check if should send to GUILD
+                if DingClassicSettings.sendToGuild then
+                    SendChatMessage(message, "GUILD")
+                end
+
+                -- Ensure at least one message is sent
+                if not DingClassicSettings.sendToSay and not DingClassicSettings.sendToGuild then
+                    print("No message sent. Both 'Send to Say' and 'Send to Guild' options are disabled.")
+                end
+
+                -- Set the flag indicating a message has been sent for this level
+                DingClassicSettings.messageSent[level] = true
+            else
+                print("No messages found in the selected pool.")
+            end
+        else
+            print("Selected message pool not found.")
+        end
+    end
 end
 
--- Function to handle the quest dialog closing
-local function OnQuestComplete()
-    questDialogOpen = false
-
-    -- Send the delayed ding message if available
-    SendDelayedMessages()
-end
-
--- Register events for quest dialog handling and combat status
-local f = CreateFrame("Frame")
-f:RegisterEvent("QUEST_DETAIL")
-f:RegisterEvent("QUEST_COMPLETE")
-f:RegisterEvent("PLAYER_REGEN_DISABLED")
-f:RegisterEvent("PLAYER_REGEN_ENABLED")
-f:SetScript("OnEvent", function(self, event, ...)
-    if event == "QUEST_DETAIL" then
-        OnQuestDetail()
-    elseif event == "QUEST_COMPLETE" then
-        OnQuestComplete()
-    elseif event == "PLAYER_REGEN_DISABLED" then
-        inCombat = true
-    elseif event == "PLAYER_REGEN_ENABLED" then
-        inCombat = false
-        SendDelayedMessages()
+frame:RegisterEvent("PLAYER_LEVEL_UP")
+frame:SetScript("OnEvent", function(self, event, ...)
+    if event == "PLAYER_LEVEL_UP" then
+        OnPlayerLevelUp(self, event, ...)
     end
 end)
 
@@ -363,7 +430,6 @@ local function SaveDingClassicSettings()
     -- Add this line to save the messageSent flag
     DingClassicSavedSettings.messageSent = DingClassicSettings.messageSent
 end
-
 
 local function InitializeOptionsPanel()
     if optionsPanelInitialized then
@@ -462,32 +528,11 @@ local function InitializeOptionsPanel()
         DingClassicSettings.sendToGuild = self:GetChecked()
     end)
 
--- Create the "Send to Party" checkbox
-local checkboxParty = CreateFrame("CheckButton", "$parentCheckboxParty", optionsPanel, "InterfaceOptionsCheckButtonTemplate")
-checkboxParty:SetPoint("TOPLEFT", checkboxGuild, "BOTTOMLEFT", 0, -10)
-checkboxParty.Text:SetText("Send to Party")
-checkboxParty:SetChecked(DingClassicSettings.sendToParty)
-
-    -- Add a tooltip for the "Send to Party" checkbox
-    checkboxParty.tooltipText = "Send ding messages to the party chat channel."
-    checkboxParty:SetScript("OnEnter", function(self)
-        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-        GameTooltip:SetText(self.tooltipText, 1, 1, 1, nil, true)
-        GameTooltip:Show()
-    end)
-    checkboxParty:SetScript("OnLeave", function()
-        GameTooltip:Hide()
-    end)
-
-    checkboxParty:SetScript("OnClick", function(self)
-        DingClassicSettings.sendToParty = self:GetChecked()
-    end)
-
--- Add a tooltip for the save button
-local saveButton = CreateFrame("Button", "$parentSaveButton", optionsPanel, "UIPanelButtonTemplate")
-saveButton:SetText("Save Settings")
-saveButton:SetPoint("TOPLEFT", checkboxParty, "BOTTOMLEFT", 0, -20)
-saveButton:SetSize(120, 25)
+    -- Add a tooltip for the save button
+    local saveButton = CreateFrame("Button", "$parentSaveButton", optionsPanel, "UIPanelButtonTemplate")
+    saveButton:SetText("Save Settings")
+    saveButton:SetPoint("TOPLEFT", checkboxGuild, "BOTTOMLEFT", 0, -20)
+    saveButton:SetSize(120, 25)
 
     saveButton.tooltipText = "Save the current settings."
     saveButton:SetScript("OnEnter", function(self)
@@ -498,15 +543,12 @@ saveButton:SetSize(120, 25)
     saveButton:SetScript("OnLeave", function()
         GameTooltip:Hide()
     end)
-	saveButton:SetScript("OnClick", function()
-        SaveDingClassicSettings()
-    end)
 
--- Modify the test button creation to add a tooltip
-local testButton = CreateFrame("Button", "$parentTestButton", optionsPanel, "UIPanelButtonTemplate")
-testButton:SetText("Send Random Message")
-testButton:SetPoint("TOPLEFT", saveButton, "BOTTOMLEFT", 0, -10)
-testButton:SetSize(160, 25)
+    -- Modify the test button creation to add a tooltip
+    local testButton = CreateFrame("Button", "$parentTestButton", optionsPanel, "UIPanelButtonTemplate")
+    testButton:SetText("Send Random Message")
+    testButton:SetPoint("TOPLEFT", saveButton, "BOTTOMLEFT", 0, -10)
+    testButton:SetSize(160, 25)
 
     testButton.tooltipText = "Send a random or custom message."
     testButton:SetScript("OnEnter", function(self)
@@ -543,19 +585,14 @@ local function LoadDingClassic()
     end
 end
 
---Loads the addon and also registers the levelup event
 local function OnEvent(self, event, arg1)
     if event == "ADDON_LOADED" and arg1 == addonName then
         LoadDingClassic()
-    elseif event == "PLAYER_LEVEL_UP" then
-        local level = arg1
-        SendRandomMessage(level)
     end
 end
 
 local f = CreateFrame("Frame")
 f:RegisterEvent("ADDON_LOADED")
-f:RegisterEvent("PLAYER_LEVEL_UP")  -- Register for PLAYER_LEVEL_UP here
 f:SetScript("OnEvent", OnEvent)
 
 -- Define your slash commands
