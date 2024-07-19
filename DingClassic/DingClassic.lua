@@ -9,7 +9,6 @@ local function InitializeSettings()
         DingClassicSavedSettings = {
             showDingMessages = true,
             sendToSay = true,
-            sendToParty = true,
             sendToGuild = true,
             messageSent = {},
             selectedMessagePool = "Default"
@@ -358,18 +357,13 @@ local function SendRandomMessage()
               SendChatMessage(message, "SAY")
             end
 
-            -- Check if the "Send to Party" option is enabled and send the message to GUILD channel
-            if DingClassicSettings.sendToParty then
-              SendChatMessage(message, "PARTY")
-            end
-
             -- Check if the "Send to Guild" option is enabled and send the message to GUILD channel
             if DingClassicSettings.sendToGuild then
                 SendChatMessage(message, "GUILD")
             end
 
             -- Ensure at least one message is sent
-            if not DingClassicSettings.sendToSay and not DingClassicSettings.sendToParty and not DingClassicSettings.sendToGuild then
+            if not DingClassicSettings.sendToSay and not DingClassicSettings.sendToGuild then
                 print("No message sent. Both 'Send to Say' and 'Send to Guild' options are disabled.")
             end
         else
@@ -388,49 +382,46 @@ local function OnPlayerLevelUp(self, event, arg1)
 
     -- Check if a message has been sent for this level
     if not DingClassicSettings.messageSent[level] then
-        local selectedPool = messagePools[DingClassicSettings.selectedMessagePool]
-        if selectedPool then
-            local numMessages = #selectedPool
-            if numMessages > 0 then
-                local randomIndex = math.random(1, numMessages)
-                local message = selectedPool[randomIndex]
-                message = string.format(message, level)
-
-                -- Check if should send to SAY
-                if DingClassicSettings.sendToSay then
-                    SendChatMessage(message, "SAY")
-                end
-
-            -- Check if the "Send to Party" option is enabled and send the message to GUILD channel
-            if DingClassicSettings.sendToParty then
-                SendChatMessage(message, "PARTY")
-              end
-
-                -- Check if should send to GUILD
-                if DingClassicSettings.sendToGuild then
-                    SendChatMessage(message, "GUILD")
-                end
-
-                -- Ensure at least one message is sent
-                if not DingClassicSettings.sendToSay and not DingClassicSettings.sendToParty and not DingClassicSettings.sendToGuild then
-                    print("No message sent. Both 'Send to Say' and 'Send to Guild' options are disabled.")
-                end
-
-                -- Set the flag indicating a message has been sent for this level
-                DingClassicSettings.messageSent[level] = true
-            else
-                print("No messages found in the selected pool.")
-            end
+        if InCombatLockdown() then
+            -- Delay the message if the player is in combat
+            levelUpPending = true
         else
-            print("Selected message pool not found.")
+            SendRandomMessage()
+            DingClassicSettings.messageSent[level] = true
         end
     end
 end
 
+-- Function to handle combat end
+local function OnCombatEnd(self, event)
+    if levelUpPending then
+        SendRandomMessage()
+        levelUpPending = false
+        local level = UnitLevel("player")
+        DingClassicSettings.messageSent[level] = true
+    end
+end
+
+-- Function to handle quest turn-in
+local function OnQuestTurnIn(self, event, questID, xpReward, moneyReward)
+    if levelUpPending then
+        SendRandomMessage()
+        levelUpPending = false
+        local level = UnitLevel("player")
+        DingClassicSettings.messageSent[level] = true
+    end
+end
+
 frame:RegisterEvent("PLAYER_LEVEL_UP")
+frame:RegisterEvent("PLAYER_REGEN_ENABLED")
+frame:RegisterEvent("QUEST_TURNED_IN")
 frame:SetScript("OnEvent", function(self, event, ...)
     if event == "PLAYER_LEVEL_UP" then
         OnPlayerLevelUp(self, event, ...)
+    elseif event == "PLAYER_REGEN_ENABLED" then
+        OnCombatEnd(self, event, ...)
+    elseif event == "QUEST_TURNED_IN" then
+        OnQuestTurnIn(self, event, ...)
     end
 end)
 
@@ -516,27 +507,6 @@ local function InitializeOptionsPanel()
 
     checkboxSay:SetScript("OnClick", function(self)
         DingClassicSettings.sendToSay = self:GetChecked()
-    end)
-
-    -- Create the "Send to Party" checkbox
-    local checkboxParty = CreateFrame("CheckButton", "$parentCheckboxParty", optionsPanel, "InterfaceOptionsCheckButtonTemplate")
-    checkboxParty:SetPoint("TOPLEFT", checkboxSay, "BOTTOMLEFT", 0, -10)
-    checkboxParty.Text:SetText("Send to GParty")
-    checkboxParty:SetChecked(DingClassicSettings.sendToParty)
-
-    -- Add a tooltip for the "Send to Party" checkbox
-    checkboxParty.tooltipText = "Send ding messages to the Party chat channel."
-    checkboxParty:SetScript("OnEnter", function(self)
-        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-        GameTooltip:SetText(self.tooltipText, 1, 1, 1, nil, true)
-        GameTooltip:Show()
-    end)
-    checkboxParty:SetScript("OnLeave", function()
-        GameTooltip:Hide()
-    end)
-
-    checkboxParty:SetScript("OnClick", function(self)
-        DingClassicSettings.sendToParty = self:GetChecked()
     end)
 
     -- Create the "Send to Guild" checkbox
