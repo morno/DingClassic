@@ -1,4 +1,4 @@
-## Interface: 50400 
+## Interface: 11503 
 ## Title: Ding Classic
 ## Notes: Announces in guild chat and say when you ding!
 ## Author: Morno (Holymorno on Stitches)

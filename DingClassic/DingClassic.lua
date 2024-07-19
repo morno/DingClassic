@@ -1,5 +1,5 @@
 local addonName = "DingClassic"
-local ding_version = "1.0.6"
+local ding_version = "1.0.7"
 local max_level = 60
 local isAddonLoaded = false  -- Variable to track if the addon has been loaded
 
@@ -9,6 +9,7 @@ local function InitializeSettings()
         DingClassicSavedSettings = {
             showDingMessages = true,
             sendToSay = true,
+            sendToParty = true,
             sendToGuild = true,
             messageSent = {},
             selectedMessagePool = "Default"
@@ -357,13 +358,18 @@ local function SendRandomMessage()
               SendChatMessage(message, "SAY")
             end
 
+            -- Check if the "Send to Party" option is enabled and send the message to GUILD channel
+            if DingClassicSettings.sendToParty then
+              SendChatMessage(message, "PARTY")
+            end
+
             -- Check if the "Send to Guild" option is enabled and send the message to GUILD channel
             if DingClassicSettings.sendToGuild then
                 SendChatMessage(message, "GUILD")
             end
 
             -- Ensure at least one message is sent
-            if not DingClassicSettings.sendToSay and not DingClassicSettings.sendToGuild then
+            if not DingClassicSettings.sendToSay and not DingClassicSettings.sendToParty and not DingClassicSettings.sendToGuild then
                 print("No message sent. Both 'Send to Say' and 'Send to Guild' options are disabled.")
             end
         else
@@ -395,13 +401,18 @@ local function OnPlayerLevelUp(self, event, arg1)
                     SendChatMessage(message, "SAY")
                 end
 
+            -- Check if the "Send to Party" option is enabled and send the message to GUILD channel
+            if DingClassicSettings.sendToParty then
+                SendChatMessage(message, "PARTY")
+              end
+
                 -- Check if should send to GUILD
                 if DingClassicSettings.sendToGuild then
                     SendChatMessage(message, "GUILD")
                 end
 
                 -- Ensure at least one message is sent
-                if not DingClassicSettings.sendToSay and not DingClassicSettings.sendToGuild then
+                if not DingClassicSettings.sendToSay and not DingClassicSettings.sendToParty and not DingClassicSettings.sendToGuild then
                     print("No message sent. Both 'Send to Say' and 'Send to Guild' options are disabled.")
                 end
 
@@ -505,6 +516,27 @@ local function InitializeOptionsPanel()
 
     checkboxSay:SetScript("OnClick", function(self)
         DingClassicSettings.sendToSay = self:GetChecked()
+    end)
+
+    -- Create the "Send to Party" checkbox
+    local checkboxParty = CreateFrame("CheckButton", "$parentCheckboxParty", optionsPanel, "InterfaceOptionsCheckButtonTemplate")
+    checkboxParty:SetPoint("TOPLEFT", checkboxSay, "BOTTOMLEFT", 0, -10)
+    checkboxParty.Text:SetText("Send to GParty")
+    checkboxParty:SetChecked(DingClassicSettings.sendToParty)
+
+    -- Add a tooltip for the "Send to Party" checkbox
+    checkboxParty.tooltipText = "Send ding messages to the Party chat channel."
+    checkboxParty:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetText(self.tooltipText, 1, 1, 1, nil, true)
+        GameTooltip:Show()
+    end)
+    checkboxParty:SetScript("OnLeave", function()
+        GameTooltip:Hide()
+    end)
+
+    checkboxParty:SetScript("OnClick", function(self)
+        DingClassicSettings.sendToParty = self:GetChecked()
     end)
 
     -- Create the "Send to Guild" checkbox
