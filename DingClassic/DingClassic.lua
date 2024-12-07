@@ -1,7 +1,20 @@
 local addonName = "DingClassic"
-local ding_version = "1.0.7"
+local ding_version = "1.0.8"
 local max_level = 60
 local isAddonLoaded = false  -- Variable to track if the addon has been loaded
+local pendingMessages = {}
+
+-- Function to set max level based on game version
+local function SetMaxLevel()
+    local _, _, _, tocVersion = GetBuildInfo()
+    if tocVersion >= 90000 then
+        max_level = 70
+    elseif tocVersion >= 80000 then
+        max_level = 60
+    else
+        max_level = 60
+    end
+end
 
 -- Function to initialize the settings
 local function InitializeSettings()
@@ -9,12 +22,12 @@ local function InitializeSettings()
         DingClassicSavedSettings = {
             showDingMessages = true,
             sendToSay = true,
+            sendToParty = true,
             sendToGuild = true,
             messageSent = {},
             selectedMessagePool = "Default"
         }
     end
-    -- Copy saved settings to the current settings table
     DingClassicSettings = DingClassicSavedSettings
 end
 
@@ -341,7 +354,93 @@ local messagePools = {
 }
 
 local DingClassicFrame = CreateFrame("Frame")
+local lastLevel = 0
+local sendingMessages = false
 
+-- Function to send queued messages when combat ends
+local function SendQueuedMessages()
+    if not InCombatLockdown() and not sendingMessages then
+        sendingMessages = true
+        local co = coroutine.create(function()
+            for _, message in ipairs(pendingMessages) do
+                if DingClassicSettings.sendToSay then
+                    SendChatMessage(message, "SAY")
+                    coroutine.yield()
+                end
+                if DingClassicSettings.sendToGuild then
+                    SendChatMessage(message, "GUILD")
+                    coroutine.yield()
+                end
+            end
+            wipe(pendingMessages)
+            sendingMessages = false
+        end)
+        C_Timer.NewTicker(0.1, function()
+            if coroutine.status(co) == "dead" then
+                return
+            end
+            coroutine.resume(co)
+        end, #pendingMessages * 2)
+    end
+end
+
+-- Function to queue a message
+local function QueueMessage(message)
+    table.insert(pendingMessages, message)
+    DingClassicFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+end
+
+-- Function to check for level up and handle messaging
+local function CheckForLevelUp()
+    local level = UnitLevel("player")
+    if level > max_level or level == lastLevel then
+        return
+    end
+
+    lastLevel = level
+    if not DingClassicSettings.messageSent[level] then
+        local selectedPool = messagePools[DingClassicSettings.selectedMessagePool]
+        if selectedPool then
+            local numMessages = #selectedPool
+            if numMessages > 0 then
+                local randomIndex = math.random(1, numMessages)
+                local message = selectedPool[randomIndex]
+                message = string.format(message, level)
+
+                if InCombatLockdown() then
+                    QueueMessage(message)
+                else
+                    if DingClassicSettings.sendToSay then
+                        SendChatMessage(message, "SAY")
+                    end
+                    if DingClassicSettings.sendToGuild then
+                        SendChatMessage(message, "GUILD")
+                    end
+                end
+
+                DingClassicSettings.messageSent[level] = true
+            else
+                print("No messages found in the selected pool.")
+            end
+        else
+            print("Selected message pool not found.")
+        end
+    end
+end
+
+-- Event handler for player level up
+local function OnPlayerLevelUp(self, event, arg1)
+    local level = arg1
+    lastLevel = level
+    CheckForLevelUp()
+end
+
+-- Event handler for quest completion
+local function OnQuestComplete(self, event)
+    C_Timer.After(2, CheckForLevelUp)
+end
+
+-- Function to send a random message
 local function SendRandomMessage()
     local selectedPool = messagePools[DingClassicSettings.selectedMessagePool]
     if selectedPool then
@@ -349,22 +448,18 @@ local function SendRandomMessage()
         if numMessages > 0 then
             local randomIndex = math.random(1, numMessages)
             local message = selectedPool[randomIndex]
-            local characterLevel = UnitLevel("player")
-            message = string.format(message, characterLevel)
+            local level = UnitLevel("player")
+            message = string.format(message, level)
 
-            -- Check if the "Send to Say" option is enabled and send the message to SAY channel
-            if DingClassicSettings.sendToSay then
-              SendChatMessage(message, "SAY")
-            end
-
-            -- Check if the "Send to Guild" option is enabled and send the message to GUILD channel
-            if DingClassicSettings.sendToGuild then
-                SendChatMessage(message, "GUILD")
-            end
-
-            -- Ensure at least one message is sent
-            if not DingClassicSettings.sendToSay and not DingClassicSettings.sendToGuild then
-                print("No message sent. Both 'Send to Say' and 'Send to Guild' options are disabled.")
+            if InCombatLockdown() then
+                QueueMessage(message)
+            else
+                if DingClassicSettings.sendToSay then
+                    SendChatMessage(message, "SAY")
+                end
+                if DingClassicSettings.sendToGuild then
+                    SendChatMessage(message, "GUILD")
+                end
             end
         else
             print("No messages found in the selected pool.")
@@ -374,63 +469,22 @@ local function SendRandomMessage()
     end
 end
 
-local frame = CreateFrame("Frame")
-
--- Function to handle player level up
-local function OnPlayerLevelUp(self, event, arg1)
-    local level = arg1
-
-    -- Check if a message has been sent for this level
-    if not DingClassicSettings.messageSent[level] then
-        if InCombatLockdown() then
-            -- Delay the message if the player is in combat
-            levelUpPending = true
-        else
-            SendRandomMessage()
-            DingClassicSettings.messageSent[level] = true
-        end
-    end
-end
-
--- Function to handle combat end
-local function OnCombatEnd(self, event)
-    if levelUpPending then
-        SendRandomMessage()
-        levelUpPending = false
-        local level = UnitLevel("player")
-        DingClassicSettings.messageSent[level] = true
-    end
-end
-
--- Function to handle quest turn-in
-local function OnQuestTurnIn(self, event, questID, xpReward, moneyReward)
-    if levelUpPending then
-        SendRandomMessage()
-        levelUpPending = false
-        local level = UnitLevel("player")
-        DingClassicSettings.messageSent[level] = true
-    end
-end
-
-frame:RegisterEvent("PLAYER_LEVEL_UP")
-frame:RegisterEvent("PLAYER_REGEN_ENABLED")
-frame:RegisterEvent("QUEST_TURNED_IN")
-frame:SetScript("OnEvent", function(self, event, ...)
+DingClassicFrame:SetScript("OnEvent", function(self, event, ...)
     if event == "PLAYER_LEVEL_UP" then
         OnPlayerLevelUp(self, event, ...)
     elseif event == "PLAYER_REGEN_ENABLED" then
-        OnCombatEnd(self, event, ...)
+        SendQueuedMessages()
+        DingClassicFrame:UnregisterEvent("PLAYER_REGEN_ENABLED")
     elseif event == "QUEST_TURNED_IN" then
-        OnQuestTurnIn(self, event, ...)
+        OnQuestComplete(self, event)
     end
 end)
 
-local function SaveDingClassicSettings()
-    -- Save the settings
-    DingClassicSavedSettings = DingClassicSettings
+DingClassicFrame:RegisterEvent("PLAYER_LEVEL_UP")
+DingClassicFrame:RegisterEvent("QUEST_TURNED_IN")
 
-    -- Add this line to save the messageSent flag
-    DingClassicSavedSettings.messageSent = DingClassicSettings.messageSent
+local function SaveDingClassicSettings()
+    DingClassicSavedSettings = DingClassicSettings
 end
 
 local function InitializeOptionsPanel()
@@ -438,16 +492,21 @@ local function InitializeOptionsPanel()
         return
     end
 
-    local optionsPanel = CreateFrame("Frame", "DingClassicOptionsPanel", InterfaceOptionsFramePanelContainer)
+    -- Create the options panel
+    local optionsPanel = CreateFrame("Frame", "DingClassicOptionsPanel", UIParent)
     optionsPanel.name = "Ding Classic"
 
-    -- Create the dropdown menu
+    -- Add panel title
+    local title = optionsPanel:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    title:SetPoint("TOPLEFT", 16, -16)
+    title:SetText("Ding Classic Settings")
+
+    -- Dropdown for message pools
     local dropdown = CreateFrame("Frame", "DingClassicDropdown", optionsPanel, "UIDropDownMenuTemplate")
-    dropdown:SetPoint("TOPLEFT", 16, -16)
+    dropdown:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -16)
     UIDropDownMenu_SetWidth(dropdown, 160)
     UIDropDownMenu_Initialize(dropdown, function(self, level)
         local info = UIDropDownMenu_CreateInfo()
-
         for poolName, poolDescription in pairs(messagePoolDescriptions) do
             info.text = poolName
             info.checked = DingClassicSettings.selectedMessagePool == poolName
@@ -456,131 +515,72 @@ local function InitializeOptionsPanel()
                 UIDropDownMenu_SetText(dropdown, self:GetText())
             end
             info.value = poolName
-
-            -- Add tooltip information
             info.tooltipTitle = poolName
             info.tooltipText = poolDescription
-
             UIDropDownMenu_AddButton(info, level)
         end
     end)
     UIDropDownMenu_SetSelectedValue(dropdown, DingClassicSettings.selectedMessagePool)
     UIDropDownMenu_SetText(dropdown, DingClassicSettings.selectedMessagePool)
 
-    -- Create the "Enable Ding Messages" checkbox
-    local checkbox = CreateFrame("CheckButton", "$parentCheckbox", optionsPanel, "InterfaceOptionsCheckButtonTemplate")
-    checkbox:SetPoint("TOPLEFT", dropdown, "BOTTOMLEFT", 0, -10)
+    -- Checkbox: Enable Ding Messages
+    local checkbox = CreateFrame("CheckButton", "$parentCheckbox", optionsPanel, "UICheckButtonTemplate")
+    checkbox:SetPoint("TOPLEFT", dropdown, "BOTTOMLEFT", 0, -16)
     checkbox.Text:SetText("Enable Ding Messages")
     checkbox:SetChecked(DingClassicSettings.showDingMessages)
-
-    -- Add a tooltip for the "Enable Ding Messages" checkbox
-    checkbox.tooltipText = "Enable or disable displaying ding messages."
-    checkbox:SetScript("OnEnter", function(self)
-        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-        GameTooltip:SetText(self.tooltipText, 1, 1, 1, nil, true)
-        GameTooltip:Show()
-    end)
-    checkbox:SetScript("OnLeave", function()
-        GameTooltip:Hide()
-    end)
-
     checkbox:SetScript("OnClick", function(self)
         DingClassicSettings.showDingMessages = self:GetChecked()
     end)
 
-    -- Create the "Send to Say" checkbox
-    local checkboxSay = CreateFrame("CheckButton", "$parentCheckboxSay", optionsPanel, "InterfaceOptionsCheckButtonTemplate")
-    checkboxSay:SetPoint("TOPLEFT", checkbox, "BOTTOMLEFT", 0, -10)
+    -- Checkbox: Send to Say
+    local checkboxSay = CreateFrame("CheckButton", "$parentCheckboxSay", optionsPanel, "UICheckButtonTemplate")
+    checkboxSay:SetPoint("TOPLEFT", checkbox, "BOTTOMLEFT", 0, -16)
     checkboxSay.Text:SetText("Send to Say")
     checkboxSay:SetChecked(DingClassicSettings.sendToSay)
-
-    -- Add a tooltip for the "Send to Say" checkbox
-    checkboxSay.tooltipText = "Send ding messages to the Say chat channel."
-    checkboxSay:SetScript("OnEnter", function(self)
-        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-        GameTooltip:SetText(self.tooltipText, 1, 1, 1, nil, true)
-        GameTooltip:Show()
-    end)
-    checkboxSay:SetScript("OnLeave", function()
-        GameTooltip:Hide()
-    end)
-
     checkboxSay:SetScript("OnClick", function(self)
         DingClassicSettings.sendToSay = self:GetChecked()
     end)
 
-    -- Create the "Send to Guild" checkbox
-    local checkboxGuild = CreateFrame("CheckButton", "$parentCheckboxGuild", optionsPanel, "InterfaceOptionsCheckButtonTemplate")
-    checkboxGuild:SetPoint("TOPLEFT", checkboxSay, "BOTTOMLEFT", 0, -10)
+    -- Checkbox: Send to Guild
+    local checkboxGuild = CreateFrame("CheckButton", "$parentCheckboxGuild", optionsPanel, "UICheckButtonTemplate")
+    checkboxGuild:SetPoint("TOPLEFT", checkboxSay, "BOTTOMLEFT", 0, -16)
     checkboxGuild.Text:SetText("Send to Guild")
     checkboxGuild:SetChecked(DingClassicSettings.sendToGuild)
-
-    -- Add a tooltip for the "Send to Guild" checkbox
-    checkboxGuild.tooltipText = "Send ding messages to the Guild chat channel."
-    checkboxGuild:SetScript("OnEnter", function(self)
-        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-        GameTooltip:SetText(self.tooltipText, 1, 1, 1, nil, true)
-        GameTooltip:Show()
-    end)
-    checkboxGuild:SetScript("OnLeave", function()
-        GameTooltip:Hide()
-    end)
-
     checkboxGuild:SetScript("OnClick", function(self)
         DingClassicSettings.sendToGuild = self:GetChecked()
     end)
 
-    -- Add a tooltip for the save button
+    -- Save Settings Button
     local saveButton = CreateFrame("Button", "$parentSaveButton", optionsPanel, "UIPanelButtonTemplate")
     saveButton:SetText("Save Settings")
     saveButton:SetPoint("TOPLEFT", checkboxGuild, "BOTTOMLEFT", 0, -20)
     saveButton:SetSize(120, 25)
-
-    saveButton.tooltipText = "Save the current settings."
-    saveButton:SetScript("OnEnter", function(self)
-        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-        GameTooltip:SetText(self.tooltipText, 1, 1, 1, nil, true)
-        GameTooltip:Show()
-    end)
-    saveButton:SetScript("OnLeave", function()
-        GameTooltip:Hide()
+    saveButton:SetScript("OnClick", function()
+        SaveDingClassicSettings()
     end)
 
-    -- Modify the test button creation to add a tooltip
+    -- Send Random Message Button
     local testButton = CreateFrame("Button", "$parentTestButton", optionsPanel, "UIPanelButtonTemplate")
     testButton:SetText("Send Random Message")
     testButton:SetPoint("TOPLEFT", saveButton, "BOTTOMLEFT", 0, -10)
     testButton:SetSize(160, 25)
-
-    testButton.tooltipText = "Send a random or custom message."
-    testButton:SetScript("OnEnter", function(self)
-        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-        GameTooltip:SetText(self.tooltipText, 1, 1, 1, nil, true)
-        GameTooltip:Show()
-    end)
-    testButton:SetScript("OnLeave", function()
-        GameTooltip:Hide()
-    end)
-
     testButton:SetScript("OnClick", function()
         SendRandomMessage()
     end)
 
-    -- Register the panel
-    InterfaceOptions_AddCategory(optionsPanel)
+    -- Register the panel with the new settings API
+    local category = Settings.RegisterCanvasLayoutCategory(optionsPanel, "Ding Classic")
+    Settings.RegisterAddOnCategory(category)
+
     optionsPanelInitialized = true
 end
 
+
+
 local function LoadDingClassic()
     if not isAddonLoaded then
-        -- Load saved settings if available
-        if DingClassicSavedSettings then
-            DingClassicSettings = DingClassicSavedSettings
-        end
-
-        -- Initialize the messageSent flag for each level
-        DingClassicSettings.messageSent = {}
-
+        InitializeSettings()
+        SetMaxLevel()
         InitializeOptionsPanel()
         isAddonLoaded = true
         print(addonName .. " is loaded!")
@@ -597,17 +597,14 @@ local f = CreateFrame("Frame")
 f:RegisterEvent("ADDON_LOADED")
 f:SetScript("OnEvent", OnEvent)
 
--- Define your slash commands
 SLASH_DINGCLASSIC1 = "/dingclassic"
 SLASH_DINGCLASSIC2 = "/ding"
 SLASH_DINGCLASSIC3 = "/dc"
 
--- Function to open the Ding Classic options window
 local function OpenDingClassicOptions()
-    InterfaceOptionsFrame_OpenToCategory("Ding Classic")
+    Settings.OpenToCategory("Ding Classic")
 end
 
--- Assign the function to the slash commands
 SlashCmdList["DINGCLASSIC"] = OpenDingClassicOptions
 SlashCmdList["DING"] = OpenDingClassicOptions
 SlashCmdList["dc"] = OpenDingClassicOptions
