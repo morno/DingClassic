@@ -1,34 +1,50 @@
+-- Debug mode function
+local function DebugPrint(...)
+    if DingClassicSettings and DingClassicSettings.debugMode then
+        print(...)
+    end
+end
+
 local addonName = "DingClassic"
-local ding_version = "1.0.8"
+local ding_version = "1.0.9"
 local max_level = 60
 local isAddonLoaded = false  -- Variable to track if the addon has been loaded
 local pendingMessages = {}
+local lastLevel = 0
 
 -- Function to set max level based on game version
 local function SetMaxLevel()
-    local _, _, _, tocVersion = GetBuildInfo()
-    if tocVersion >= 90000 then
-        max_level = 70
-    elseif tocVersion >= 80000 then
-        max_level = 60
-    else
-        max_level = 60
-    end
+    max_level = GetMaxLevelForExpansionLevel(GetExpansionLevel())
 end
+
 
 -- Function to initialize the settings
 local function InitializeSettings()
     if not DingClassicSavedSettings then
+        -- Initialize the saved settings for the first time
         DingClassicSavedSettings = {
             showDingMessages = true,
             sendToSay = true,
-            sendToParty = true,
             sendToGuild = true,
             messageSent = {},
-            selectedMessagePool = "Default"
+            selectedMessagePool = "Default",
+            debugMode = false,
+            lastLevel = 1, -- Default to level 1
         }
+        DebugPrint("[INFO] Settings initialized for the first time. Default lastLevel set to 1.")
     end
+
+    -- Load the saved settings
     DingClassicSettings = DingClassicSavedSettings
+
+    -- Ensure lastLevel is correctly initialized
+    if not DingClassicSettings.lastLevel or DingClassicSettings.lastLevel > UnitLevel("player") then
+        DingClassicSettings.lastLevel = UnitLevel("player")
+        DebugPrint("[INFO] lastLevel corrected to current player level:", UnitLevel("player"))
+    end
+
+    lastLevel = DingClassicSettings.lastLevel -- Load saved last level
+    DebugPrint("[INFO] Settings loaded. lastLevel set to:", lastLevel)
 end
 
 local messagePoolDescriptions = {
@@ -354,90 +370,15 @@ local messagePools = {
 }
 
 local DingClassicFrame = CreateFrame("Frame")
-local lastLevel = 0
 local sendingMessages = false
-
--- Function to send queued messages when combat ends
-local function SendQueuedMessages()
-    if not InCombatLockdown() and not sendingMessages then
-        sendingMessages = true
-        local co = coroutine.create(function()
-            for _, message in ipairs(pendingMessages) do
-                if DingClassicSettings.sendToSay then
-                    SendChatMessage(message, "SAY")
-                    coroutine.yield()
-                end
-                if DingClassicSettings.sendToGuild then
-                    SendChatMessage(message, "GUILD")
-                    coroutine.yield()
-                end
-            end
-            wipe(pendingMessages)
-            sendingMessages = false
-        end)
-        C_Timer.NewTicker(0.1, function()
-            if coroutine.status(co) == "dead" then
-                return
-            end
-            coroutine.resume(co)
-        end, #pendingMessages * 2)
-    end
-end
 
 -- Function to queue a message
 local function QueueMessage(message)
+    if #pendingMessages > 10 then
+        DebugPrint("[WARNING] Too many messages queued! Check your logic.")
+    end
     table.insert(pendingMessages, message)
     DingClassicFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
-end
-
--- Function to check for level up and handle messaging
-local function CheckForLevelUp()
-    local level = UnitLevel("player")
-    if level > max_level or level == lastLevel then
-        return
-    end
-
-    lastLevel = level
-    if not DingClassicSettings.messageSent[level] then
-        local selectedPool = messagePools[DingClassicSettings.selectedMessagePool]
-        if selectedPool then
-            local numMessages = #selectedPool
-            if numMessages > 0 then
-                local randomIndex = math.random(1, numMessages)
-                local message = selectedPool[randomIndex]
-                message = string.format(message, level)
-
-                if InCombatLockdown() then
-                    QueueMessage(message)
-                else
-                    if DingClassicSettings.sendToSay then
-                        SendChatMessage(message, "SAY")
-                    end
-                    if DingClassicSettings.sendToGuild then
-                        SendChatMessage(message, "GUILD")
-                    end
-                end
-
-                DingClassicSettings.messageSent[level] = true
-            else
-                print("No messages found in the selected pool.")
-            end
-        else
-            print("Selected message pool not found.")
-        end
-    end
-end
-
--- Event handler for player level up
-local function OnPlayerLevelUp(self, event, arg1)
-    local level = arg1
-    lastLevel = level
-    CheckForLevelUp()
-end
-
--- Event handler for quest completion
-local function OnQuestComplete(self, event)
-    C_Timer.After(2, CheckForLevelUp)
 end
 
 -- Function to send a random message
@@ -469,23 +410,148 @@ local function SendRandomMessage()
     end
 end
 
+-- Function to send queued messages when combat ends
+local function SendQueuedMessages()
+    if not InCombatLockdown() and not sendingMessages then
+        sendingMessages = true
+        local co = coroutine.create(function()
+            for _, message in ipairs(pendingMessages) do
+                if DingClassicSettings.sendToSay then
+                    SendChatMessage(message, "SAY")
+                    coroutine.yield()
+                end
+                if DingClassicSettings.sendToGuild then
+                    SendChatMessage(message, "GUILD")
+                    coroutine.yield()
+                end
+            end
+            wipe(pendingMessages)
+            sendingMessages = false
+        end)
+        C_Timer.NewTicker(0.1, function()
+            if coroutine.status(co) == "dead" then
+                return
+            end
+            coroutine.resume(co)
+        end, #pendingMessages * 2)
+    end
+end
+
+-- Function to check for level-up
+local function CheckForLevelUp()
+    local currentLevel = UnitLevel("player")
+    DebugPrint("[INFO] CheckForLevelUp called. Current Level:", currentLevel, "Last Level:", lastLevel)
+
+    if currentLevel == lastLevel then
+        DebugPrint("[INFO] No new level detected. Skipping check.")
+        return
+    end
+
+    -- Only proceed if a message hasn't been sent for this level
+    if not DingClassicSettings.messageSent[currentLevel] then
+        DebugPrint("[INFO] New level detected. Sending message for Level:", currentLevel)
+        SendRandomMessage()
+        DingClassicSettings.messageSent[currentLevel] = true
+        lastLevel = currentLevel
+        DingClassicSettings.lastLevel = currentLevel
+        DebugPrint("[INFO] Message sent. Updated Last Level to:", currentLevel)
+    else
+        DebugPrint("[INFO] Message already sent for Level:", currentLevel)
+        lastLevel = currentLevel
+        DingClassicSettings.lastLevel = currentLevel
+    end
+end
+
+
+local xpUpdateThrottle = false
+
+local function OnPlayerXPUpdate()
+    if xpUpdateThrottle then
+        DebugPrint("[INFO] PLAYER_XP_UPDATE skipped due to throttle.")
+        return
+    end
+
+    xpUpdateThrottle = true
+    DebugPrint("[INFO] PLAYER_XP_UPDATE triggered. Checking for level-up.")
+
+    C_Timer.After(0.5, function()
+        CheckForLevelUp()
+        xpUpdateThrottle = false
+    end)
+end
+
+local function OnPlayerLevelUp(self, event, newLevel)
+    DebugPrint("[INFO] PLAYER_LEVEL_UP triggered. New Level:", newLevel)
+
+    if newLevel > lastLevel then
+        -- Delay handling to ensure other events (e.g., quest turn-in) are processed
+        C_Timer.After(0.1, function()
+            if not DingClassicSettings.messageSent[newLevel] then
+                DebugPrint("[INFO] Sending level-up message for Level:", newLevel)
+                SendRandomMessage()
+                DingClassicSettings.messageSent[newLevel] = true
+            else
+                DebugPrint("[INFO] Message already sent for Level:", newLevel)
+            end
+            lastLevel = newLevel
+            DingClassicSettings.lastLevel = newLevel
+            DebugPrint("[INFO] Updated lastLevel to:", newLevel)
+        end)
+    else
+        DebugPrint("[WARNING] PLAYER_LEVEL_UP triggered, but newLevel <= lastLevel. Skipping.")
+    end
+end
+
+-- Function to handle quest turn-in
+local function OnQuestTurnIn(self, event, questID, xpReward, moneyReward)
+    DebugPrint("[INFO] QUEST_TURNED_IN triggered. QuestID:", questID, "XP Reward:", xpReward, "Money Reward:", moneyReward)
+
+    C_Timer.After(0.5, function()
+        local currentLevel = UnitLevel("player")
+        if currentLevel > lastLevel then
+            DebugPrint("[INFO] Level-up detected during quest turn-in. Current Level:", currentLevel)
+            CheckForLevelUp() -- Ensure only one message is sent
+        else
+            DebugPrint("[INFO] No level-up detected during quest turn-in.")
+        end
+    end)
+end
+
+
+
+local lastCheckTimestamp = 0
+
+-- Function to throttle level-up checks
+local function ThrottledCheckForLevelUp()
+    local now = GetTime()
+    if now - lastCheckTimestamp > 0.5 then -- Only allow a check every 0.5 seconds
+        lastCheckTimestamp = now
+        CheckForLevelUp()
+    end
+end
+
+-- Main event handler
 DingClassicFrame:SetScript("OnEvent", function(self, event, ...)
     if event == "PLAYER_LEVEL_UP" then
         OnPlayerLevelUp(self, event, ...)
-    elseif event == "PLAYER_REGEN_ENABLED" then
-        SendQueuedMessages()
-        DingClassicFrame:UnregisterEvent("PLAYER_REGEN_ENABLED")
+    elseif event == "PLAYER_XP_UPDATE" then
+        OnPlayerXPUpdate()
     elseif event == "QUEST_TURNED_IN" then
-        OnQuestComplete(self, event)
+        OnQuestTurnIn(self, event, ...)
     end
 end)
 
+-- Ensure PLAYER_LEVEL_UP is registered and prioritized
 DingClassicFrame:RegisterEvent("PLAYER_LEVEL_UP")
+DingClassicFrame:RegisterEvent("PLAYER_XP_UPDATE")
 DingClassicFrame:RegisterEvent("QUEST_TURNED_IN")
 
 local function SaveDingClassicSettings()
     DingClassicSavedSettings = DingClassicSettings
 end
+
+local saveButton -- Declare the saveButton at the top
+local testButton -- Declare the testButton at the top
 
 local function InitializeOptionsPanel()
     if optionsPanelInitialized then
@@ -550,17 +616,27 @@ local function InitializeOptionsPanel()
         DingClassicSettings.sendToGuild = self:GetChecked()
     end)
 
+    -- Checkbox: Enable Debug Mode
+    local checkboxDebug = CreateFrame("CheckButton", "$parentCheckboxDebug", optionsPanel, "UICheckButtonTemplate")
+    checkboxDebug:SetPoint("TOPLEFT", checkboxGuild, "BOTTOMLEFT", 0, -16)
+    checkboxDebug.Text:SetText("Enable Debug Mode")
+    checkboxDebug:SetChecked(DingClassicSettings.debugMode)
+    checkboxDebug:SetScript("OnClick", function(self)
+        DingClassicSettings.debugMode = self:GetChecked()
+        DebugPrint("Debug mode", DingClassicSettings.debugMode and "enabled" or "disabled")
+    end)
+
     -- Save Settings Button
-    local saveButton = CreateFrame("Button", "$parentSaveButton", optionsPanel, "UIPanelButtonTemplate")
+    saveButton = CreateFrame("Button", "$parentSaveButton", optionsPanel, "UIPanelButtonTemplate")
     saveButton:SetText("Save Settings")
-    saveButton:SetPoint("TOPLEFT", checkboxGuild, "BOTTOMLEFT", 0, -20)
+    saveButton:SetPoint("TOPLEFT", checkboxDebug, "BOTTOMLEFT", 0, -16)
     saveButton:SetSize(120, 25)
     saveButton:SetScript("OnClick", function()
         SaveDingClassicSettings()
     end)
 
     -- Send Random Message Button
-    local testButton = CreateFrame("Button", "$parentTestButton", optionsPanel, "UIPanelButtonTemplate")
+    testButton = CreateFrame("Button", "$parentTestButton", optionsPanel, "UIPanelButtonTemplate")
     testButton:SetText("Send Random Message")
     testButton:SetPoint("TOPLEFT", saveButton, "BOTTOMLEFT", 0, -10)
     testButton:SetSize(160, 25)
@@ -576,14 +652,17 @@ local function InitializeOptionsPanel()
 end
 
 
+local function InitializeLastLevel()
+    print(addonName .. " initialized.")
+end
 
 local function LoadDingClassic()
     if not isAddonLoaded then
         InitializeSettings()
         SetMaxLevel()
+--        InitializeLastLevel()
         InitializeOptionsPanel()
         isAddonLoaded = true
-        print(addonName .. " is loaded!")
     end
 end
 
