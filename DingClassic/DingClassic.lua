@@ -6,7 +6,7 @@ local function DebugPrint(...)
 end
 
 local addonName = "DingClassic"
-local ding_version = "1.0.9"
+local ding_version = "1.0.10"
 local max_level = 60
 local isAddonLoaded = false  -- Variable to track if the addon has been loaded
 local pendingMessages = {}
@@ -16,7 +16,6 @@ local lastLevel = 0
 local function SetMaxLevel()
     max_level = GetMaxLevelForExpansionLevel(GetExpansionLevel())
 end
-
 
 -- Function to initialize the settings
 local function InitializeSettings()
@@ -449,19 +448,17 @@ local function CheckForLevelUp()
 
     -- Only proceed if a message hasn't been sent for this level
     if not DingClassicSettings.messageSent[currentLevel] then
-        DebugPrint("[INFO] New level detected. Sending message for Level:", currentLevel)
+        print("[INFO] Sending level-up message for Level:", currentLevel) -- Logs for testing
         SendRandomMessage()
         DingClassicSettings.messageSent[currentLevel] = true
         lastLevel = currentLevel
         DingClassicSettings.lastLevel = currentLevel
-        DebugPrint("[INFO] Message sent. Updated Last Level to:", currentLevel)
     else
         DebugPrint("[INFO] Message already sent for Level:", currentLevel)
         lastLevel = currentLevel
         DingClassicSettings.lastLevel = currentLevel
     end
 end
-
 
 local xpUpdateThrottle = false
 
@@ -516,8 +513,6 @@ local function OnQuestTurnIn(self, event, questID, xpReward, moneyReward)
         end
     end)
 end
-
-
 
 local lastCheckTimestamp = 0
 
@@ -650,7 +645,6 @@ local function InitializeOptionsPanel()
 
     optionsPanelInitialized = true
 end
-
 
 local function InitializeLastLevel()
     print(addonName .. " initialized.")
