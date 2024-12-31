@@ -2,9 +2,15 @@
 ## Title: Ding Classic
 ## Notes: Announces in guild chat and say when you ding!
 ## Author: Morno (Holymorno on Stitches)
-## Version: 1.0.10
+## Version: 1.0.11
 ## Dependencies:
-## SavedVariables: DingClassicSavedSettings
-## SavedVariablesPerCharacter:
+## X-Flavor: Retail
+## SavedVariablesPerCharacter: DingClassicSavedSettings
 DingClassic.lua
-DingClassic.xml
+Options.lua
+Locales/enUS.lua
+Locales/daDK.lua
+Locales/nbNO.lua
+Locales/svSE.lua
+Locales/fiFI.lua
+Locales/isIS.lua
