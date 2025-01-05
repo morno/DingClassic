@@ -1,16 +1,12 @@
 ## Interface: 90100
 ## Title: Ding Classic
-## Notes: Announces in guild chat and say when you ding!
-## Author: Morno (Holymorno on Stitches)
-## Version: 1.0.11
+## Notes: A modular addon to send customizable messages to chat channels.
+## Author: Morno
+## Version: 1.0.12
 ## Dependencies:
 ## X-Flavor: Retail
-## SavedVariablesPerCharacter: DingClassicSavedSettings
+## SavedVariables: DingClassicDB
+Libs.xml
+
 DingClassic.lua
-Options.lua
-Locales/enUS.lua
-Locales/daDK.lua
-Locales/nbNO.lua
-Locales/svSE.lua
-Locales/fiFI.lua
-Locales/isIS.lua
+Localization.lua
