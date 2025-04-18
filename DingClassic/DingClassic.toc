@@ -1,11 +1,10 @@
-## Interface: 20501
+## Interface: 110100
 ## Title: Ding Classic
 ## Notes: A modular addon to send customizable messages to chat channels.
 ## Author: Morno
 ## Version: 1.0.14
-## Dependencies:
-## X-Flavor: TBC
 ## SavedVariables: DingClassicDB
+
 Libs.xml
 
 DingClassic.lua

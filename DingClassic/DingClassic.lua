@@ -9,10 +9,27 @@ local AceDB = LibStub("AceDB-3.0")
 local AceDBOptions = LibStub("AceDBOptions-3.0")
 local LDB = LibStub("LibDataBroker-1.1", true)
 local LDBIcon = LDB and LibStub("LibDBIcon-1.0", true)
-local ADDON_VERSION = GetAddOnMetadata("DingClassic", "Version")
 
 -- Ensure global namespace is initialized
 _G.DINGCLASSIC = _G.DINGCLASSIC or {}
+
+function DingClassic:GetMetadata(field, fallback)
+    if C_AddOns and C_AddOns.GetAddOnMetadata then
+        return C_AddOns.GetAddOnMetadata("DingClassic", field) or fallback
+    elseif GetAddOnMetadata then
+        return GetAddOnMetadata("DingClassic", field) or fallback
+    else
+        return fallback
+    end
+end
+
+function DingClassic:GetAddonVersion()
+    return self.version or "Unknown"
+end
+
+function DingClassic:GetAddonAuthor()
+    return self.author or "Unknown"
+end
 
 function DingClassic:LoadLocalization()
     -- Ensure AceLocale is available
@@ -49,7 +66,7 @@ function DingClassic:GetOptions()
 
     return {
         name = function()
-            local version = GetAddOnMetadata("DingClassic", "Version") or "Unknown"
+            local version = self:GetAddonVersion()
             return (L["TITLE"] or "Ding Classic Options") .. " |cff00ff00(v" .. version .. ")|r"
         end,
         type = "group",
@@ -222,8 +239,8 @@ function DingClassic:GetOptions()
                 type = "description",
                 name = function()
                     -- Fetch dynamic data
-                    local addonVersion = GetAddOnMetadata("DingClassic", "Version") or "Unknown"
-                    local addonAuthor = GetAddOnMetadata("DingClassic", "Author") or "Unknown"
+                    local addonVersion = self:GetAddonVersion()
+                    local addonAuthor = self:GetAddonAuthor()
                     local selectedLocale = DingClassic.db.profile.selectedLocale or "Unknown"
                     local activePool = DingClassic.db.profile.selectedMessagePool or "Default"
                     local isEnabled = DingClassic.db.profile.enable and "|cff00ff00Enabled|r" or "|cffff0000Disabled|r"
@@ -262,8 +279,11 @@ end
 
 function DingClassic:OnInitialize()
     -- Load localization
+    self.version = self:GetMetadata("Version", "1.0.13")
+    self.author = self:GetMetadata("Author", "Morno")    
     self:LoadLocalization()
     self.L = _G.DINGCLASSIC.L
+
 
     -- Initialize AceDB
     self.db = AceDB:New("DingClassicDB", {
@@ -314,7 +334,7 @@ function DingClassic:OnInitialize()
     end
 
     -- Print load message
-    print(string.format("|cFF00FF00[DingClassic]:|r Addon loaded successfully! Version: %s", ADDON_VERSION))
+    print(string.format("|cFF00FF00[DingClassic]:|r Addon loaded successfully! Version: %s", DingClassic:GetAddonVersion()))
 
     -- Register slash commands
     self:RegisterChatCommand("dc", "HandleSlashCommands")
