@@ -152,6 +152,19 @@ function DingClassic:GetOptions()
                         end,
                         order = 2, -- Below "Select Message Pool"
                     },
+                    interval = {
+                        type = "select",
+                        name = "Ding Interval",
+                        desc = "Choose how often to send ding messages",
+                        values = {
+                            [1] = "Every Level",
+                            [5] = "Every 5 Levels",
+                            [10] = "Every 10 Levels",
+                        },
+                        get = function() return self.db.profile.levelInterval or 1 end,
+                        set = function(_, value) self.db.profile.levelInterval = value end,
+                        order = 3,
+                    },
                     channels = {
                         type = "multiselect",
                         name = self.L["CHANNELS"] or "Channels",
@@ -174,13 +187,13 @@ function DingClassic:GetOptions()
                             end
                         end,
                         disabled = function(_, key) return key ~= "guild" end,
-                        order = 3,
+                        order = 4,
                     },
                     channels_note = {
                         type = "description",
                         name = self.L["CHANNELS_NOTE"] or "Note: Blizzard restricts automated messaging to 'Say', 'Party', and 'Raid' channels. These options are disabled for automatic level-up messages.",
                         fontSize = "medium",
-                        order = 3.1,
+                        order = 4.1,
                     },
                     previewSection = {
                         type = "group",
@@ -284,6 +297,7 @@ function DingClassic:OnInitialize()
     self:LoadLocalization()
     self.L = _G.DINGCLASSIC.L
 
+    self.lastKnownLevel = UnitLevel("player")
 
     -- Initialize AceDB
     self.db = AceDB:New("DingClassicDB", {
@@ -291,6 +305,7 @@ function DingClassic:OnInitialize()
             enable = true,
             selectedMessagePool = "Default",
             selectedLocale = "enUS",
+            levelInterval = 5,
             channels = {
                 say = false,
                 party = false,
@@ -382,7 +397,7 @@ function DingClassic:SendLevelUpMessage(level)
     end
 
     -- Send message to allowed channels
-    if self.db.profile.channels.guild then
+    if self.db.profile.channels.guild and IsInGuild() then
         SendChatMessage(message, "GUILD")
     else
         self:Print(message)
@@ -390,7 +405,6 @@ function DingClassic:SendLevelUpMessage(level)
 end
 
 function DingClassic:OnPlayerLevelUp(_, level)
-    -- Use the provided level or fallback to the player's current level
     level = level or UnitLevel("player")
 
     if not self.db.profile.enable then
@@ -398,6 +412,12 @@ function DingClassic:OnPlayerLevelUp(_, level)
         return
     end
 
+    local interval = self.db.profile.levelInterval or 1
+    if interval > 1 and level % interval ~= 0 then
+        return
+    end
+
+    self.lastKnownLevel = level
     self:SendLevelUpMessage(level)
 end
 
