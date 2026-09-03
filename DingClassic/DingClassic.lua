@@ -1,4 +1,4 @@
--- DingClassic.lua - Core Addon Logic (Refactored for Ace3)
+﻿-- DingClassic.lua - Core Addon Logic (Refactored for Ace3)
 
 local addonName, DingClassic = ...
 DingClassic = LibStub("AceAddon-3.0"):NewAddon(addonName, "AceEvent-3.0", "AceConsole-3.0")
@@ -12,6 +12,7 @@ local LDBIcon = LDB and LibStub("LibDBIcon-1.0", true)
 
 -- Ensure global namespace is initialized
 _G.DINGCLASSIC = _G.DINGCLASSIC or {}
+
 
 function DingClassic:GetMetadata(field, fallback)
     if C_AddOns and C_AddOns.GetAddOnMetadata then
@@ -170,28 +171,21 @@ function DingClassic:GetOptions()
                         name = self.L["CHANNELS"] or "Channels",
                         desc = self.L["CHANNELS_DESC"] or "Select the channels to send the message to.",
                         values = {
-                            say = self.L["SAY"] or "Say",
                             party = self.L["PARTY"] or "Party",
                             guild = self.L["GUILD"] or "Guild",
                             raid = self.L["RAID"] or "Raid",
                         },
                         get = function(_, key)
-                            if key == "guild" then
-                                return self.db.profile.channels[key]
-                            end
-                            return false -- Grey out other channels
+                            return self.db.profile.channels[key]
                         end,
                         set = function(_, key, value)
-                            if key == "guild" then
-                                self.db.profile.channels[key] = value
-                            end
+                            self.db.profile.channels[key] = value
                         end,
-                        disabled = function(_, key) return key ~= "guild" end,
                         order = 4,
                     },
                     channels_note = {
                         type = "description",
-                        name = self.L["CHANNELS_NOTE"] or "Note: Blizzard restricts automated messaging to 'Say', 'Party', and 'Raid' channels. These options are disabled for automatic level-up messages.",
+                        name = self.L["CHANNELS_NOTE"] or "Note: 'Party', 'Raid' and 'Guild' always send automatically.",
                         fontSize = "medium",
                         order = 4.1,
                     },
@@ -307,7 +301,6 @@ function DingClassic:OnInitialize()
             selectedLocale = "enUS",
             levelInterval = 5,
             channels = {
-                say = false,
                 party = false,
                 guild = true,
                 raid = false,
@@ -397,9 +390,27 @@ function DingClassic:SendLevelUpMessage(level)
     end
 
     -- Send message to allowed channels
+    self:SendToAllowedChannels(message)
+end
+
+function DingClassic:SendToAllowedChannels(message)
+    -- Party/Raid/Guild have no Blizzard restriction on automated SendChatMessage calls.
+    local sentAnywhere = false
+
     if self.db.profile.channels.guild and IsInGuild() then
         SendChatMessage(message, "GUILD")
-    else
+        sentAnywhere = true
+    end
+
+    if self.db.profile.channels.raid and IsInRaid() then
+        SendChatMessage(message, "RAID")
+        sentAnywhere = true
+    elseif self.db.profile.channels.party and IsInGroup() and not IsInRaid() then
+        SendChatMessage(message, "PARTY")
+        sentAnywhere = true
+    end
+
+    if not sentAnywhere then
         self:Print(message)
     end
 end
@@ -471,9 +482,5 @@ function DingClassic:HandleSlashCommands(input)
 end
 
 function DingClassic:SendMessageToAllowedChannels(message)
-    if self.db.profile.channels.guild and IsInGuild() then
-        SendChatMessage(message, "GUILD")
-    else
-        self:Print("Cannot send automatic messages to channels other than Guild due to Blizzard restrictions.")
-    end
+    self:SendToAllowedChannels(message)
 end
