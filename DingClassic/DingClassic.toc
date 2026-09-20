@@ -1,8 +1,8 @@
-## Interface: 110100
+## Interface: 110100, 20505, 11509, 16001
 ## Title: Ding Classic
 ## Notes: A modular addon to send customizable messages to chat channels.
 ## Author: Morno
-## Version: 1.0.16
+## Version: 1.0.17
 ## SavedVariables: DingClassicDB
 
 Libs.xml

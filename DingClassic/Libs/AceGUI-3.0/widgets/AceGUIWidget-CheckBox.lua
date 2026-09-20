@@ -12,6 +12,18 @@ local select, pairs = select, pairs
 local PlaySound = PlaySound
 local CreateFrame, UIParent = CreateFrame, UIParent
 
+-- Compat: Blizzard removed the global SetDesaturation(texture, bool) function in
+-- some newer clients (e.g. this beta). Fall back to the texture's own
+-- :SetDesaturated(bool) method when the global isn't available.
+local SetDesaturation = SetDesaturation
+if not SetDesaturation then
+	SetDesaturation = function(texture, desaturated)
+		if texture and texture.SetDesaturated then
+			texture:SetDesaturated(desaturated)
+		end
+	end
+end
+
 --[[-----------------------------------------------------------------------------
 Support functions
 -------------------------------------------------------------------------------]]
