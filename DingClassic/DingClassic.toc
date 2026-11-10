@@ -2,7 +2,9 @@
 ## Title: Ding Classic
 ## Notes: A modular addon to send customizable messages to chat channels.
 ## Author: Morno
-## Version: 1.0.17
+## Version: 1.0.18
+## IconTexture: Interface\AddOns\DingClassic\Icons\DingClassic_64x64
+## Category: Chat & Communication
 ## SavedVariables: DingClassicDB
 
 Libs.xml
