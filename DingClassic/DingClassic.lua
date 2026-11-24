@@ -1,5 +1,25 @@
 ﻿-- DingClassic.lua - Core Addon Logic (Refactored for Ace3)
 
+-- BARE DIAGNOSTIC: a raw ADDON_LOADED listener with zero dependency on
+-- AceAddon or any other library. Only prints when Debug Mode was on in the
+-- last saved profile (checked directly on the raw table, since this fires
+-- before self.db exists).
+do
+    local bareFrame = CreateFrame("Frame")
+    bareFrame:RegisterEvent("ADDON_LOADED")
+    bareFrame:SetScript("OnEvent", function(_, _, loadedName)
+        if loadedName == "DingClassic" then
+            local raw = _G["DingClassicDB"]
+            if type(raw) == "table" and raw.profile and raw.profile.debugMode then
+                print("|cffff00ff[DC DEBUG]|r type(_G.DingClassicDB) = " .. type(raw))
+                if raw.profile.channels then
+                    print("|cffff00ff[DC DEBUG]|r profile.channels.party = " .. tostring(raw.profile.channels.party))
+                end
+            end
+        end
+    end)
+end
+
 local addonName, DingClassic = ...
 DingClassic = LibStub("AceAddon-3.0"):NewAddon(addonName, "AceEvent-3.0", "AceConsole-3.0")
 
@@ -17,12 +37,415 @@ DingClassic = LibStub("AceAddon-3.0"):NewAddon(addonName, "AceEvent-3.0", "AceCo
 -- Warcraft Wiki's own SavedVariables example recommends.
 local dcLoadFrame = CreateFrame("Frame")
 dcLoadFrame:RegisterEvent("ADDON_LOADED")
-dcLoadFrame:SetScript("OnEvent", function(frame, _, loadedName)
+dcLoadFrame:SetScript("OnEvent", function(_, _, loadedName)
     if loadedName == addonName then
-        frame:UnregisterEvent("ADDON_LOADED")
         DingClassic:RealOnInitialize()
     end
 end)
+
+-- ===== Chat/roster API compatibility =====
+-- Blizzard deprecated the global SendChatMessage (11.2.0) in favour of C_ChatInfo.SendChatMessage,
+-- and moved GuildRoster into C_GuildInfo. Resolve whichever exists at call time and never let a
+-- failed send throw - in debug mode the failure is printed instead.
+-- Taint note: a chat send can be silently BLOCKED (ADDON_ACTION_BLOCKED, attributed to whichever
+-- addon last tainted the running code - we saw "Auctionator") when it runs from a code path that
+-- inherited someone else's taint, e.g. a C_Timer callback created inside a GUILD_ROSTER_UPDATE
+-- handler. pcall can't see that (the blocked call just returns), so ALL sends are queued and
+-- executed from our OWN frame's OnUpdate, which only carries Ding Classic's own execution context.
+DingClassic.sendQueue = {}
+DingClassic.sendBlocked = nil
+
+local sendFrame = CreateFrame("Frame")
+sendFrame:RegisterEvent("ADDON_ACTION_BLOCKED")
+local blockedReports = 0
+sendFrame:SetScript("OnEvent", function(_, _, blockedAddon, blockedFunc)
+    local info = tostring(blockedAddon) .. ": " .. tostring(blockedFunc)
+    local during = "other"
+    if DingClassic.sendingNow then
+        DingClassic.sendBlocked = info
+        during = "chat send"
+    elseif DingClassic.rosterNow then
+        DingClassic.rosterBlockedNow = info
+        during = "guild roster refresh"
+    elseif DingClassic.lastAutoSend and GetTime() - DingClassic.lastAutoSend.t < 1 then
+        -- The block can arrive AFTER the send call has returned (seen on Forever),
+        -- so the check in SendChat misses it and every later send gets blocked
+        -- too. Catch it here: that channel goes click/key-only for the session
+        -- and the dropped message is parked for sending.
+        local last = DingClassic.lastAutoSend
+        DingClassic.lastAutoSend = nil
+        DingClassic.blockedChannels[last.channel] = true
+        DingClassic:QueuePending(last.message, last.channel)
+        during = "chat send (late)"
+    end
+    -- debug only, max 6 per session: shows what each blocked call was (WoW often blames the wrong addon)
+    if blockedReports < 6 and DingClassic.db and DingClassic.db.profile.debugMode then
+        blockedReports = blockedReports + 1
+        DingClassic:Print("|cffff0000[DEBUG]|r ADDON_ACTION_BLOCKED (" .. info .. ") during: " .. during)
+    end
+end)
+sendFrame:SetScript("OnUpdate", function()
+    local queue = DingClassic.sendQueue
+    if #queue == 0 then return end
+    local now = GetTime()
+    local i = 1
+    while i <= #queue do
+        local item = queue[i]
+        if item.at <= now then
+            table.remove(queue, i)
+            DingClassic.inCleanContext = true
+            local ok, err = pcall(item.fn)
+            DingClassic.inCleanContext = false
+            if not ok and DingClassic.db and DingClassic.db.profile.debugMode then
+                DingClassic:Print("|cffff0000[DEBUG]|r Queued action failed: " .. tostring(err))
+            end
+        else
+            i = i + 1
+        end
+    end
+end)
+
+-- Runs fn from our own OnUpdate after `delay` seconds (0 = next frame).
+function DingClassic:RunClean(fn, delay)
+    table.insert(self.sendQueue, { at = GetTime() + (delay or 0), fn = fn })
+end
+
+-- WoW Forever (and Retail since 12.1.5) silently DROP chat that an addon sends without a real
+-- key press / click (the call is blocked with ADDON_ACTION_BLOCKED, regardless of whose taint).
+-- So: the first time an automatic send is blocked we remember that channel as "click-only"
+-- for the session, park the message in self.pendingChat, and show a small "Send" button. One
+-- click (or /dc post) = one hardware event = one message actually sent.
+DingClassic.pendingChat = {}
+DingClassic.blockedChannels = {}
+DingClassic.pendingNoticeShown = {}
+
+-- WoW Forever (Interface 16xxx) is known to drop automatic guild chat, so
+-- don't even try (each try is another ADDON_ACTION_BLOCKED in BugSack).
+local function IsForeverClient()
+    local toc = select(4, GetBuildInfo()) or 0
+    return toc >= 16000 and toc < 20000
+end
+if IsForeverClient() then
+    DingClassic.blockedChannels.GUILD = true
+    DingClassic.blockedChannels.OFFICER = true
+end
+
+-- True for Midnight-style "secret" values (some event args, e.g. chat senders
+-- inside instances), which can't be string-processed by addon code.
+local function IsSecretValue(v)
+    if type(issecretvalue) ~= "function" then return false end
+    local ok, secret = pcall(issecretvalue, v)
+    return ok and secret and true or false
+end
+
+-- Which group channel to use right now, and which toggle ("raid"/"party")
+-- governs it. Dungeon finder / battleground groups must use INSTANCE_CHAT -
+-- PARTY/RAID don't reach them.
+local function GetGroupChannel()
+    if LE_PARTY_CATEGORY_INSTANCE and IsInGroup(LE_PARTY_CATEGORY_INSTANCE) then
+        return "INSTANCE_CHAT", IsInRaid() and "raid" or "party"
+    elseif IsInRaid() then
+        return "RAID", "raid"
+    elseif IsInGroup() then
+        return "PARTY", "party"
+    end
+    return nil, nil
+end
+
+-- Realm names come both as "Living Flame" (GetRealmName) and "LivingFlame"
+-- (guild roster / chat senders): compare them without spaces, dashes or apostrophes.
+local function RealmKey(realm)
+    return realm and (realm:gsub("[%s%-']", "")):lower() or nil
+end
+local PENDING_MAX, PENDING_MAX_AGE = 10, 300
+
+function DingClassic:UpdatePostButton()
+    -- drop stale entries so we never post an old "gratz" minutes later
+    local now = GetTime()
+    for i = #self.pendingChat, 1, -1 do
+        if now - self.pendingChat[i].t > PENDING_MAX_AGE then table.remove(self.pendingChat, i) end
+    end
+
+    local count = #self.pendingChat
+    if not self.postButton then
+        if count == 0 then return end
+        local ok, btn = pcall(CreateFrame, "Button", "DingClassicPostButton", UIParent, "UIPanelButtonTemplate")
+        if not ok or not btn then return end
+        btn:SetSize(190, 28)
+        btn:SetFrameStrata("DIALOG")
+        local pos = self.db and self.db.profile.postPos
+        if pos then btn:SetPoint(pos[1], UIParent, pos[2], pos[3], pos[4]) else btn:SetPoint("CENTER", UIParent, "CENTER", 0, 180) end
+        btn:SetMovable(true)
+        btn:SetClampedToScreen(true)
+        btn:RegisterForClicks("LeftButtonUp")
+        btn:RegisterForDrag("RightButton")
+        btn:SetScript("OnDragStart", function(f) f:StartMoving() end)
+        btn:SetScript("OnDragStop", function(f)
+            f:StopMovingOrSizing()
+            local point, _, relPoint, x, y = f:GetPoint()
+            if self.db then self.db.profile.postPos = { point, relPoint, x, y } end
+        end)
+        btn:SetScript("OnClick", function() self:SendPending() end)
+        btn:SetScript("OnEnter", function(f)
+            GameTooltip:SetOwner(f, "ANCHOR_BOTTOM")
+            local item = self.pendingChat[1]
+            GameTooltip:SetText("Ding Classic")
+            if item then GameTooltip:AddLine("[" .. item.channel .. "] " .. item.message, 1, 1, 1, true) end
+            GameTooltip:AddLine("Left-click: send. Right-drag: move.", 0.7, 0.7, 0.7)
+            GameTooltip:Show()
+        end)
+        btn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+        self.postButton = btn
+    end
+
+    if count == 0 then
+        self.postButton:Hide()
+    else
+        self.postButton:SetText("Ding Classic: send (" .. count .. ")")
+        self.postButton:Show()
+    end
+end
+
+function DingClassic:QueuePending(message, channel)
+    if #self.pendingChat >= PENDING_MAX then table.remove(self.pendingChat, 1) end
+    table.insert(self.pendingChat, { message = message, channel = channel, t = GetTime() })
+    local mode = self:GetGuildSendMode()
+    if self.db and not self.db.profile.guildSendModeChosen then
+        -- First time: let the player pick how these messages should go out.
+        self:ShowGuildModeChooser()
+    elseif not self.pendingNoticeShown[channel] then
+        self.pendingNoticeShown[channel] = true
+        local how = (mode == "prefill") and "The chat box opens with the text - press Enter to send it"
+            or (mode == "button") and "Click the Ding Classic button (or type /dc post) to send it"
+            or "Your next key press or click in the game world sends it (or click the Ding Classic button / type /dc post)"
+        self:Print("This game version only allows " .. channel .. " chat from a key press or click. " .. how .. ": " .. message
+            .. "  (Change with /dc guildmode.)")
+    elseif self.db and self.db.profile.debugMode then
+        self:Print("|cff888888[DEBUG]|r Queued [" .. channel .. ", mode " .. mode .. "]: " .. message)
+    end
+    if mode == "auto" then self:EnsureKeyCatcher() end
+    self:UpdatePostButton()
+    if mode == "prefill" then self:RunClean(function() self:TryPrefill() end, 0) end
+end
+
+function DingClassic:GetGuildSendMode()
+    local mode = self.db and self.db.profile.guildSendMode
+    if mode == "prefill" or mode == "button" then return mode end
+    return "auto"
+end
+
+function DingClassic:SetGuildSendMode(mode)
+    self.db.profile.guildSendMode = mode
+    self.db.profile.guildSendModeChosen = true
+    self.pendingNoticeShown = {}
+    local text = (mode == "prefill") and "press Enter in the chat box"
+        or (mode == "button") and "the Ding Classic button / /dc post only"
+        or "next key press or click in the game world"
+    self:Print("Guild messages will be sent with: " .. text .. ". Change any time with /dc guildmode or in the settings.")
+    if mode == "auto" then self:EnsureKeyCatcher() end
+    if mode == "prefill" then self:RunClean(function() self:TryPrefill() end, 0) end
+    self:UpdatePostButton()
+end
+
+-- One-time choice. The popup's buttons are clicks (hardware events), so in
+-- "auto" mode the first waiting message is sent right away from that click.
+function DingClassic:ShowGuildModeChooser()
+    if not StaticPopupDialogs or not StaticPopup_Show then return end
+    if not StaticPopupDialogs.DINGCLASSIC_GUILD_MODE then
+        StaticPopupDialogs.DINGCLASSIC_GUILD_MODE = {
+            text = "Ding Classic\n\nWoW Forever only lets addons post in guild chat right after a key press or click."
+                .. " How should Ding Classic send its guild messages?\n\n"
+                .. "|cffffd100Key / click|r: sent with your next key press or click in the game world (recommended).\n"
+                .. "|cffffd100Enter|r: the chat box opens with the text, you press Enter.\n"
+                .. "|cffffd100Button|r: only when you click the Ding Classic button.\n\n"
+                .. "You can change this later with /dc guildmode.",
+            button1 = "Key / click",
+            button2 = "Enter",
+            button3 = "Button",
+            OnAccept = function()
+                DingClassic:SetGuildSendMode("auto")
+                if #DingClassic.pendingChat > 0 then DingClassic:SendPending() end
+            end,
+            OnCancel = function(_, _, reason)
+                if reason == "clicked" then DingClassic:SetGuildSendMode("prefill") end
+            end,
+            OnAlt = function() DingClassic:SetGuildSendMode("button") end,
+            timeout = 0,
+            whileDead = true,
+            hideOnEscape = false,
+            preferredIndex = 3,
+        }
+    end
+    StaticPopup_Show("DINGCLASSIC_GUILD_MODE")
+end
+
+-- "prefill" mode: open the chat box with the slash command + text for the
+-- first waiting message; Blizzard's own chat code sends it when the player
+-- presses Enter. Never overwrites a chat box the player is already typing in,
+-- and waits for combat to end. The next message opens once that box closes.
+local CHAT_SLASH = { GUILD = "/g ", OFFICER = "/o ", PARTY = "/p ", RAID = "/ra ", INSTANCE_CHAT = "/i " }
+
+function DingClassic:TryPrefill()
+    if self:GetGuildSendMode() ~= "prefill" or #self.pendingChat == 0 or self.prefillOpen then return end
+    if InCombatLockdown and InCombatLockdown() then return end -- OnCombatEnd retries
+    local getActive = ChatEdit_GetActiveWindow or (ChatFrameUtil and ChatFrameUtil.GetActiveWindow)
+    local active = getActive and getActive()
+    if active and active.IsShown and active:IsShown() then
+        self:RunClean(function() self:TryPrefill() end, 2) -- player is typing; try again shortly
+        return
+    end
+    local open = ChatFrame_OpenChat or (ChatFrameUtil and ChatFrameUtil.OpenChat)
+    if not open then return end
+    local item = table.remove(self.pendingChat, 1)
+    local ok, box = pcall(open, (CHAT_SLASH[item.channel] or "/g ") .. item.message)
+    self:UpdatePostButton()
+    if not ok then
+        table.insert(self.pendingChat, 1, item)
+        return
+    end
+    if type(box) == "table" and box.HookScript then
+        self.prefillOpen = true
+        self.prefillHooked = self.prefillHooked or {}
+        if not self.prefillHooked[box] then
+            self.prefillHooked[box] = true
+            box:HookScript("OnHide", function()
+                if self.prefillOpen then
+                    self.prefillOpen = false
+                    self:RunClean(function() self:TryPrefill() end, 0.5)
+                end
+            end)
+        end
+    end
+end
+
+-- An invisible frame that sees every key press and passes it on to the game
+-- untouched (SetPropagateKeyboardInput). A key press is a hardware event, so
+-- the next one - moving, casting, anything - sends one pending message.
+-- Not parented to UIParent so it also works with the UI hidden (Alt+Z).
+-- SetPropagateKeyboardInput is protected in combat, so the frame is only
+-- created out of combat; pending messages also wait for combat to end.
+function DingClassic:EnsureKeyCatcher()
+    if self.keyCatcher then return true end
+    if InCombatLockdown and InCombatLockdown() then return false end
+    local f = CreateFrame("Frame", "DingClassicKeyCatcher")
+    if not (f.EnableKeyboard and f.SetPropagateKeyboardInput) then return false end
+    f:EnableKeyboard(true)
+    f:SetPropagateKeyboardInput(true)
+    f:SetScript("OnKeyDown", function()
+        if #self.pendingChat > 0 and self:GetGuildSendMode() == "auto"
+            and not (InCombatLockdown and InCombatLockdown()) then
+            self:SendPending()
+        end
+    end)
+    f:Show()
+    self.keyCatcher = f
+
+    -- A click on the 3D world (ground, NPC, mob, camera drag) is a hardware
+    -- event too, so it can carry the pending message as well. HookScript runs
+    -- after Blizzard's own handler and doesn't replace it. (The GLOBAL_MOUSE_DOWN
+    -- *event* does NOT count - tested on Forever 2026-11-24.)
+    if WorldFrame and WorldFrame.HookScript and not self.worldClickHooked then
+        self.worldClickHooked = true
+        WorldFrame:HookScript("OnMouseDown", function()
+            if #self.pendingChat > 0 and self:GetGuildSendMode() == "auto"
+                and not (InCombatLockdown and InCombatLockdown()) then
+                self:SendPending()
+            end
+        end)
+    end
+    return true
+end
+
+-- Called from the button / slash command, i.e. from a real hardware event.
+function DingClassic:SendPending()
+    local item = table.remove(self.pendingChat, 1)
+    if not item then self:UpdatePostButton() return end
+    self.userInitiated = true
+    local ok = self:SendChat(item.message, item.channel)
+    self.userInitiated = false
+    if not ok then
+        table.insert(self.pendingChat, 1, item)
+        self:Print("Still blocked - could not send to " .. item.channel .. ". Run /dc apicheck and report this.")
+    end
+    self:UpdatePostButton()
+end
+
+-- Sends one chat message. Tries C_ChatInfo.SendChatMessage first, then the deprecated global; a
+-- blocked call counts as a failure. Automatic sends are queued to our own OnUpdate (taint, see
+-- above); a block on an automatic send flips that channel to click-only mode.
+function DingClassic:SendChat(message, channel)
+    if not self.inCleanContext and not self.userInitiated then
+        self:RunClean(function() self:SendChat(message, channel) end, 0)
+        return true
+    end
+
+    if not self.userInitiated and self.blockedChannels[channel] then
+        self:QueuePending(message, channel)
+        return false
+    end
+
+    local candidates = {}
+    if C_ChatInfo and C_ChatInfo.SendChatMessage then table.insert(candidates, { "C_ChatInfo.SendChatMessage", C_ChatInfo.SendChatMessage }) end
+    if SendChatMessage then table.insert(candidates, { "SendChatMessage", SendChatMessage }) end
+    local debugMode = self.db and self.db.profile.debugMode
+
+    if #candidates == 0 then
+        if debugMode then self:Print("|cffff0000[DEBUG]|r No chat send function available on this client.") end
+        return false
+    end
+
+    for _, c in ipairs(candidates) do
+        self.sendBlocked = nil
+        self.sendingNow = true
+        local ok, err = pcall(c[2], message, channel)
+        self.sendingNow = false
+        if ok and not self.sendBlocked then
+            if not self.userInitiated then
+                self.lastAutoSend = { channel = channel, message = message, t = GetTime() }
+            end
+            if debugMode then
+                self:Print("|cff888888[DEBUG]|r Sent to " .. tostring(channel) .. " via " .. c[1] .. ": " .. tostring(message))
+            end
+            return true
+        end
+        if debugMode then
+            self:Print("|cffff0000[DEBUG]|r " .. c[1] .. " to " .. tostring(channel) .. " failed: " .. tostring(self.sendBlocked or err))
+        end
+        if self.sendBlocked and not self.userInitiated then
+            -- blocked without a hardware event: switch this channel to click-to-send, no retry
+            self.blockedChannels[channel] = true
+            self:QueuePending(message, channel)
+            return false
+        end
+    end
+    return false
+end
+
+function DingClassic:RequestGuildRoster()
+    local fn = (C_GuildInfo and C_GuildInfo.GuildRoster) or GuildRoster
+    if not fn or self.rosterRefreshBlocked then return false end
+    self.rosterBlockedNow = nil
+    self.rosterNow = true
+    pcall(fn)
+    self.rosterNow = false
+    if self.rosterBlockedNow then
+        -- Blocked calls spam BugGrabber on every attempt, so stop asking for this session.
+        self.rosterRefreshBlocked = true
+        if self.db and self.db.profile.debugMode then
+            self:Print("|cffff0000[DEBUG]|r Guild roster refresh is blocked on this client - automatic refresh disabled. "
+                .. "Guild-wide level gratz will only update when WoW refreshes the roster itself.")
+        end
+        return false
+    end
+    return true
+end
+
+-- Picks a random ding message from the selected pool (nil if the pool is empty/missing).
+function DingClassic:PickDingMessage(level)
+    local pool = self.messagePools and self.messagePools[self.db.profile.selectedMessagePool]
+    if not pool or #pool == 0 then return nil end
+    return (pool[math.random(#pool)]:gsub("%%d", tostring(level)))
+end
 
 local AceConfig = LibStub("AceConfig-3.0")
 local AceConfigDialog = LibStub("AceConfigDialog-3.0")
@@ -34,29 +457,6 @@ local LDBIcon = LDB and LibStub("LibDBIcon-1.0", true)
 
 -- Ensure global namespace is initialized
 _G.DINGCLASSIC = _G.DINGCLASSIC or {}
-
--- Builds a comparable "Name-Realm" key from a player name. Chat events and the
--- guild roster use the normalized realm ("LivingFlame"), UnitName() returns no
--- realm at all for same-realm players, and GetRealmName() returns the display
--- form with spaces ("Living Flame") - so strip spaces/dashes/apostrophes from
--- the realm part and fill in our own realm when none is given.
--- Accepts either NameKey("Name-Realm") or NameKey(UnitName(unit)).
-local function NameKey(name, realm)
-    if not name or name == "" then return nil end
-    if not realm or realm == "" then
-        local n, r = strsplit("-", name, 2)
-        name, realm = n, r
-    end
-    if not realm or realm == "" then
-        realm = GetRealmName() or ""
-    end
-    realm = realm:gsub("[%s%-']", "")
-    return name .. "-" .. realm
-end
-
--- Several achievements from the same player within this window (they often
--- come in bursts) only get one gratz.
-local ACHIEVEMENT_BURST_WINDOW = 30 -- seconds
 
 
 function DingClassic:GetMetadata(field, fallback)
@@ -106,12 +506,6 @@ function DingClassic:DebugAvailableLocales()
     end
 end
 
-function DingClassic:CountLocales()
-    local count = 0
-    for _ in pairs(self.availableLocales or {}) do count = count + 1 end
-    return count
-end
-
 function DingClassic:GetOptions()
     local profiles = AceDBOptions:GetOptionsTable(self.db)
     local L = self.L
@@ -157,18 +551,13 @@ function DingClassic:GetOptions()
                         type = "select",
                         name = L["LOCALE_LABEL"] or "Select Locale",
                         desc = L["LOCALE_DESC"] or "Choose the language for the addon.",
-                        -- Only enUS exists today, so there's nothing to choose
-                        -- between - hidden until a second locale is added.
-                        hidden = function() return self:CountLocales() < 2 end,
                         values = function()
                             return self.availableLocales
                         end,
                         get = function() return self.db.profile.selectedLocale end,
                         set = function(_, value)
-                            if value ~= self.db.profile.selectedLocale then
-                                self.db.profile.selectedLocale = value
-                                ReloadUI() -- Reload the UI to apply the locale
-                            end
+                            self.db.profile.selectedLocale = value
+                            ReloadUI() -- Reload the UI to apply the locale
                         end,
                     },
                     debugMode = {
@@ -212,21 +601,24 @@ function DingClassic:GetOptions()
                                 return
                             end
                             
-                            local message = DingClassic:GetRandomDingMessage(UnitLevel("player"))
-                            if message then
-                                DingClassic:SendMessageToAllowedChannels(message)
+                            local level = UnitLevel("player")
+                            local message = DingClassic:PickDingMessage(level)
+                            if not message then
+                                DingClassic:Print("The selected message pool is empty.")
+                                return
                             end
+                            DingClassic:SendMessageToAllowedChannels(message)
                         end,
                         order = 2, -- Below "Select Message Pool"
                     },
                     interval = {
                         type = "select",
-                        name = L["DING_INTERVAL"] or "Ding Interval",
-                        desc = L["DING_INTERVAL_DESC"] or "Choose how often to send ding messages",
+                        name = "Ding Interval",
+                        desc = "Choose how often to send ding messages",
                         values = {
-                            [1] = L["DING_INTERVAL_1"] or "Every Level",
-                            [5] = L["DING_INTERVAL_5"] or "Every 5 Levels",
-                            [10] = L["DING_INTERVAL_10"] or "Every 10 Levels",
+                            [1] = "Every Level",
+                            [5] = "Every 5 Levels",
+                            [10] = "Every 10 Levels",
                         },
                         get = function() return self.db.profile.levelInterval or 1 end,
                         set = function(_, value) self.db.profile.levelInterval = value end,
@@ -251,7 +643,7 @@ function DingClassic:GetOptions()
                     },
                     channels_note = {
                         type = "description",
-                        name = self.L["CHANNELS_NOTE"] or "Note: Party and Raid only send while you're in that kind of group, and Guild only while you're in a guild.",
+                        name = self.L["CHANNELS_NOTE"] or "Note: 'Party', 'Raid' and 'Guild' always send automatically.",
                         fontSize = "medium",
                         order = 4.1,
                     },
@@ -260,7 +652,7 @@ function DingClassic:GetOptions()
                         name = L["PREVIEW_SECTION"] or "Message Preview",
                         desc = L["PREVIEW_SECTION_DESC"] or "Preview random messages from the selected pool.",
                         inline = true, -- Make this visually a box
-                        order = 5, -- Place Preview Section at the bottom
+                        order = 4, -- Place Preview Section at the bottom
                         args = {
                             messagePreview = {
                                 type = "description",
@@ -578,32 +970,6 @@ local function HasNativeSettingsAPI()
         and true or false
 end
 
--- Which chat type reaches our current group, or nil when not in one. On
--- Retail/Forever a LFG/instance group can't be reached with "PARTY"/"RAID" -
--- it needs "INSTANCE_CHAT". Classic-family clients keep the old behavior.
-local function GetGroupChatType()
-    if not IsInGroup() then return nil end
-    if not IsClassicFamily() and LE_PARTY_CATEGORY_INSTANCE
-        and IsInGroup(LE_PARTY_CATEGORY_INSTANCE) then
-        return "INSTANCE_CHAT"
-    end
-    return IsInRaid() and "RAID" or "PARTY"
-end
-
--- SendChatMessage moved to C_ChatInfo in 11.2.0; the global is only a
--- deprecated wrapper there.
-local SendChat = (C_ChatInfo and C_ChatInfo.SendChatMessage) or SendChatMessage
-
--- C_GuildInfo.GuildRoster() replaced the old global GuildRoster() on modern
--- clients; use whichever exists.
-local function RequestGuildRoster()
-    if C_GuildInfo and C_GuildInfo.GuildRoster then
-        C_GuildInfo.GuildRoster()
-    elseif GuildRoster then
-        GuildRoster()
-    end
-end
-
 -- Widget builders for the canvas-layout native panel. Built from raw
 -- CreateFrame + texture file paths rather than named XML templates
 -- (e.g. "InterfaceOptionsCheckButtonTemplate"), since this beta client has
@@ -642,6 +1008,8 @@ local function AddCanvasCheckbox(parent, y, label, tooltip, getFn, setFn)
     return y - ROW_HEIGHT
 end
 
+-- A simple "current value + click to cycle" button, used instead of a real
+-- dropdown menu (avoids depending on UIDropDownMenuTemplate).
 -- A real dropdown: click the button to show a small list of options below it,
 -- click an option to pick it. Built entirely from plain frames/textures (no
 -- UIDropDownMenuTemplate or other named XML template), consistent with the
@@ -716,12 +1084,6 @@ local function AddCanvasDropdown(parent, y, label, tooltip, options, getFn, setF
             openDropdown = popout
         end
     end)
-    -- Close the list when the settings panel (and so this button) is hidden,
-    -- otherwise it reappears already open the next time the panel is shown.
-    btn:SetScript("OnHide", function()
-        popout:Hide()
-        if openDropdown == popout then openDropdown = nil end
-    end)
     AttachTooltip(btn, label, tooltip)
     Refresh()
     return y - ROW_HEIGHT
@@ -762,6 +1124,7 @@ local function AddCanvasEditBox(parent, y, label, tooltip, getFn, setFn)
     end
     if not fontOK then
         pcall(eb.SetFont, eb, "Fonts\\FRIZQT__.TTF", 12, "")
+        print("|cffff9900[DC EditBox]|r No named font object worked for '" .. label .. "', used raw Fonts\\FRIZQT__.TTF fallback.")
     end
 
     eb:SetTextColor(1, 1, 1, 1)
@@ -816,13 +1179,6 @@ local function AddCanvasSlider(parent, y, label, tooltip, minValue, maxValue, st
     slider:SetSize(200, 16)
     slider:SetPoint("TOPLEFT", 16, y - 22)
     slider:SetThumbTexture("Interface\\Buttons\\UI-SliderBar-Button-Horizontal")
-    slider:EnableMouse(true)
-    -- Visible track behind the thumb (a bare Slider frame has none).
-    local track = slider:CreateTexture(nil, "BACKGROUND")
-    track:SetColorTexture(0, 0, 0, 0.5)
-    track:SetPoint("LEFT", 0, 0)
-    track:SetPoint("RIGHT", 0, 0)
-    track:SetHeight(6)
     slider:SetMinMaxValues(minValue, maxValue)
     slider:SetValueStep(step)
     slider:SetObeyStepOnDrag(true)
@@ -889,6 +1245,7 @@ function DingClassic:RegisterNativeOptions()
                 .. "Debug Mode: " .. debugText .. "\n"
                 .. "Locale: |cffffff00" .. tostring(profile.selectedLocale) .. "|r    "
                 .. "Active Pool: |cffffff00" .. tostring(profile.selectedMessagePool) .. "|r    "
+                .. "Profile: |cffffff00" .. tostring(self.db:GetCurrentProfile()) .. "|r\n"
                 .. "Author: |cffffff00" .. tostring(self.author) .. "|r\n\n"
                 .. "|cff888888Check CurseForge for the latest version. Source & issues on GitHub:|r\n"
                 .. "|cff3399ffgithub.com/morno/DingClassic|r\n\n"
@@ -967,15 +1324,13 @@ function DingClassic:RegisterNativeOptions()
         y = dy
     end
 
-    -- Only shown once there's more than one locale to choose between.
-    if self:CountLocales() >= 2 then
+    do
         local localeOptions = {}
         for locale, label in pairs(self.availableLocales) do
             table.insert(localeOptions, { value = locale, text = label })
         end
-        table.sort(localeOptions, function(a, b) return a.text < b.text end)
         y = AddCanvasDropdown(generalFrame, y, L["LOCALE_LABEL"] or "Select Locale",
-            L["LOCALE_DESC"] or "Choose the language for the addon. Reloads the UI.",
+            L["LOCALE_DESC"] or "Choose the language for the addon. Click to cycle, reloads the UI.",
             localeOptions,
             function() return profile.selectedLocale end,
             function(v)
@@ -986,6 +1341,42 @@ function DingClassic:RegisterNativeOptions()
             end)
     end
 
+    -- Account-wide by default, with an opt-out per character (mirrors what
+    -- AceDB's Profiles tab already offers on Classic-family clients).
+    do
+        local function DeepCopy(t)
+            if type(CopyTable) == "function" then
+                local ok, result = pcall(CopyTable, t)
+                if ok then return result end
+            end
+            local copy = {}
+            for k, v in pairs(t) do
+                copy[k] = (type(v) == "table") and DeepCopy(v) or v
+            end
+            return copy
+        end
+
+        y = AddCanvasCheckbox(generalFrame, y, L["USE_CHAR_PROFILE"] or "Use Character-Specific Settings",
+            L["USE_CHAR_PROFILE_DESC"] or "By default all characters on this account share the same settings. Enable this to give the current character its own separate copy instead. Reloads the UI to apply.",
+            function()
+                local raw = self.db.raw
+                return raw and raw.charUsesOwnProfile and raw.charUsesOwnProfile[self.db.charKey] or false
+            end,
+            function(v)
+                local raw = self.db.raw
+                local charKey = self.db.charKey
+                if type(raw.charUsesOwnProfile) ~= "table" then raw.charUsesOwnProfile = {} end
+                if v then
+                    -- Starting point for the new character-specific copy: whatever
+                    -- this character was just using (the shared profile).
+                    if type(raw.charProfiles) ~= "table" then raw.charProfiles = {} end
+                    raw.charProfiles[charKey] = DeepCopy(self.db.profile)
+                end
+                raw.charUsesOwnProfile[charKey] = v
+                ReloadUI()
+            end)
+    end
+
     -- ===== Options =====
     y = -16
     do
@@ -993,7 +1384,6 @@ function DingClassic:RegisterNativeOptions()
         for poolName in pairs(self.messagePools) do
             table.insert(poolOptions, { value = poolName, text = poolName })
         end
-        table.sort(poolOptions, function(a, b) return a.text < b.text end)
         y = AddCanvasDropdown(optionsFrame, y, L["POOL_LABEL"] or "Select Message Pool",
             L["POOL_DESC"] or "Choose a set of messages for level-up announcements.",
             poolOptions,
@@ -1004,13 +1394,8 @@ function DingClassic:RegisterNativeOptions()
             end)
     end
 
-    y = AddCanvasDropdown(optionsFrame, y, L["DING_INTERVAL"] or "Ding Interval",
-        L["DING_INTERVAL_DESC"] or "Choose how often to send ding messages",
-        {
-            { value = 1, text = L["DING_INTERVAL_1"] or "Every Level" },
-            { value = 5, text = L["DING_INTERVAL_5"] or "Every 5 Levels" },
-            { value = 10, text = L["DING_INTERVAL_10"] or "Every 10 Levels" },
-        },
+    y = AddCanvasDropdown(optionsFrame, y, "Ding Interval", "Choose how often to send ding messages",
+        { { value = 1, text = "Every Level" }, { value = 5, text = "Every 5 Levels" }, { value = 10, text = "Every 10 Levels" } },
         function() return profile.levelInterval end,
         function(v) profile.levelInterval = v end)
 
@@ -1026,6 +1411,18 @@ function DingClassic:RegisterNativeOptions()
         L["SEND_DING_RAID_DESC"] or "When you level up, send the ding message to your Raid chat.",
         function() return profile.channels.raid end,
         function(v) profile.channels.raid = v end)
+
+    if IsForeverClient() then
+        y = AddCanvasDropdown(optionsFrame, y, "How to send guild messages (WoW Forever)",
+            "WoW Forever only lets addons post in guild chat right after a key press or click.",
+            {
+                { value = "auto", text = "Next key press / world click" },
+                { value = "prefill", text = "Open chat box, I press Enter" },
+                { value = "button", text = "Only the Ding Classic button" },
+            },
+            function() return self:GetGuildSendMode() end,
+            function(v) self:SetGuildSendMode(v) end)
+    end
 
     y = y - 10
     y = AddCanvasButton(optionsFrame, y, L["TEST"] or "Test Ding Message",
@@ -1131,6 +1528,11 @@ end
 -- switching (this addon has never exposed that in its UI anyway) - every
 -- value is written directly into this table so there's no read-through
 -- defaults metatable involved anywhere in the chain.
+-- Returns a stable key identifying the current character, e.g. "Brossann-Area52".
+local function GetCharKey()
+    return UnitName("player") .. "-" .. GetRealmName()
+end
+
 function DingClassic:CreateNativeDB(defaults)
     local raw = _G["DingClassicDB"]
     if type(raw) ~= "table" then
@@ -1141,15 +1543,59 @@ function DingClassic:CreateNativeDB(defaults)
         raw.profile = {}
     end
     DeepMergeDefaults(raw.profile, defaults.profile)
+
+    if type(raw.charProfiles) ~= "table" then raw.charProfiles = {} end
+    if type(raw.charUsesOwnProfile) ~= "table" then raw.charUsesOwnProfile = {} end
+
+    local charKey = GetCharKey()
+    local activeProfile = raw.profile -- default: shared account-wide profile
+
+    if raw.charUsesOwnProfile[charKey] then
+        if type(raw.charProfiles[charKey]) ~= "table" then
+            raw.charProfiles[charKey] = {}
+        end
+        DeepMergeDefaults(raw.charProfiles[charKey], defaults.profile)
+        activeProfile = raw.charProfiles[charKey]
+    end
+
     return {
-        profile = raw.profile,
-        GetCurrentProfile = function() return "Default" end,
+        profile = activeProfile,
+        raw = raw,
+        charKey = charKey,
+        GetCurrentProfile = function()
+            return raw.charUsesOwnProfile[charKey] and (charKey .. " (character-specific)") or "Default (account-wide)"
+        end,
     }
 end
 
 function DingClassic:RealOnInitialize()
+    -- DEBUG: raw dump of the global SavedVariables table at the exact moment
+    -- our ADDON_LOADED handler fires, before anything (including
+    -- CreateNativeDB/AceDB) touches it. Only runs if Debug Mode was on in
+    -- the last saved profile (checked directly on the raw table, since
+    -- self.db doesn't exist yet at this point).
+    do
+        local raw = _G["DingClassicDB"]
+        if type(raw) == "table" and raw.profile and raw.profile.debugMode then
+            print("|cff00ffff[DC DEBUG @ RealOnInitialize]|r type = " .. type(raw))
+            local function dump(t, indent)
+                indent = indent or ""
+                for k, v in pairs(t) do
+                    if type(v) == "table" then
+                        print("|cff00ffff[DC DEBUG]|r " .. indent .. tostring(k) .. " = {")
+                        dump(v, indent .. "  ")
+                        print("|cff00ffff[DC DEBUG]|r " .. indent .. "}")
+                    else
+                        print("|cff00ffff[DC DEBUG]|r " .. indent .. tostring(k) .. " = " .. tostring(v))
+                    end
+                end
+            end
+            dump(raw)
+        end
+    end
+
     -- Load localization
-    self.version = self:GetMetadata("Version", "Unknown")
+    self.version = self:GetMetadata("Version", "1.0.13")
     self.author = self:GetMetadata("Author", "Morno")    
     self:LoadLocalization()
     self.L = _G.DINGCLASSIC.L
@@ -1162,9 +1608,15 @@ function DingClassic:RealOnInitialize()
             enable = true,
             selectedMessagePool = "Default",
             selectedLocale = "enUS",
-            levelInterval = 5,
+            -- How chat that WoW Forever only allows from a key press/click (guild)
+            -- gets sent: "auto" = next key press or world click, "prefill" = chat
+            -- box opens with the text and the player presses Enter, "button" = only
+            -- the Ding Classic button / /dc post. Asked once (guildSendModeChosen).
+            guildSendMode = "auto",
+            guildSendModeChosen = false,
+            levelInterval = 1,
             channels = {
-                party = false,
+                party = true,
                 guild = true,
                 raid = false,
             },
@@ -1174,10 +1626,10 @@ function DingClassic:RealOnInitialize()
             -- Ported from AutoGratzer: congratulate guild/party/raid members on achievements,
             -- and welcome new members to the guild.
             gratz = {
-                achievementEnable = true,
+                achievementEnable = false,
                 message = "Gratzzz %s!",
                 levelUpEnable = true,
-                guildLevelUpEnable = false, -- off by default: can be a lot of guild-chat traffic in a big guild
+                guildLevelUpEnable = true,
                 minLevel = 1, -- only send level up gratz once the new level is at least this high
                 levelInterval = 1, -- only send level up gratz on levels that are a multiple of this
                 levelUpMessage = "Congrats %s, now level %d!",
@@ -1220,15 +1672,6 @@ function DingClassic:RealOnInitialize()
         Lore = self.L["MESSAGE_Lore"] or {},
     }
 
-    -- A pool name saved by an older version may no longer exist - fall back
-    -- to Default instead of erroring on the next level up.
-    if not self.messagePools[self.db.profile.selectedMessagePool] then
-        self.db.profile.selectedMessagePool = "Default"
-    end
-
-    self.guildNotes = {}
-    self.recentAchievementGratz = {}
-
     -- Register options
     self:RegisterOptions()
 
@@ -1270,16 +1713,18 @@ function DingClassic:RealOnInitialize()
 
     -- Register level-up event
     self:RegisterEvent("PLAYER_LEVEL_UP", "OnPlayerLevelUp")
-    -- Fired (synchronously, inside the SendChatMessage call) when the client
-    -- refuses one of our chat messages - see SafeSendChat.
-    self:RegisterEvent("ADDON_ACTION_BLOCKED", "OnAddonActionBlocked")
-    self:RegisterEvent("ADDON_ACTION_FORBIDDEN", "OnAddonActionBlocked")
 
     -- Register combat and interaction events
     self:RegisterEvent("PLAYER_REGEN_DISABLED", "OnCombatStart")
     self:RegisterEvent("PLAYER_REGEN_ENABLED", "OnCombatEnd")
     self:RegisterEvent("GOSSIP_SHOW", "OnNPCInteraction")
     self:RegisterEvent("GOSSIP_CLOSED", "OnNPCInteractionEnd")
+    -- Turning in a quest via gossip hands over to the quest frame, and modern
+    -- clients don't always fire GOSSIP_CLOSED for that.
+    self:RegisterEvent("QUEST_FINISHED", "OnNPCInteractionEnd")
+    if C_PlayerInteractionManager then
+        self:RegisterEvent("PLAYER_INTERACTION_MANAGER_FRAME_HIDE", "OnNPCInteractionEnd")
+    end
 
     -- Register achievement-gratz and guild-welcome events (ported from AutoGratzer)
     self:RegisterEvent("CHAT_MSG_GUILD_ACHIEVEMENT", "OnChatMsgGuildAchievement")
@@ -1295,28 +1740,16 @@ function DingClassic:RealOnInitialize()
     -- "just joined" and trigger false welcome messages. Anyone who joined while we were offline
     -- gets folded into this first snapshot silently (no retroactive welcome).
     self.rosterReady = false
-    RequestGuildRoster()
-    C_Timer.After(5, function()
-        -- Throw away whatever partial snapshot streamed in during the first
-        -- seconds: the next full roster update becomes the welcome baseline,
-        -- so late-arriving entries of a big roster never look like new joins.
-        self.knownGuildMembers = nil
-        self.knownGuildMemberCount = nil
-        self.rosterReady = true
-        RequestGuildRoster()
-    end)
+    self:RequestGuildRoster()
+    C_Timer.After(5, function() self.rosterReady = true end)
 
     -- Blizzard doesn't reliably push fresh guild roster data (level, notes, etc.) on its own -
     -- GUILD_ROSTER_UPDATE can go a long time between real refreshes unless something actively
     -- asks for one. Guild Roster Manager does this itself (that's why its own level-up log
     -- above showed roughly a minute of lag between the real level-up and the log entry). We
     -- request our own refresh every 30s so guild-wide level-up gratz doesn't lag arbitrarily
-    -- long behind an actual level-up. Skipped when nothing would use the result.
-    C_Timer.NewTicker(30, function()
-        if IsInGuild() and (self.db.profile.gratz.guildLevelUpEnable or self.db.profile.guildWelcome.enable) then
-            RequestGuildRoster()
-        end
-    end)
+    -- long behind an actual level-up.
+    C_Timer.NewTicker(30, function() if IsInGuild() then self:RequestGuildRoster() end end)
 
     -- Register AceDB callbacks for profile changes (Classic/Ace3 path only -
     -- the lightweight native DB has no callback system, nor needs one)
@@ -1325,20 +1758,11 @@ function DingClassic:RealOnInitialize()
         self.db.RegisterCallback(self, "OnProfileCopied", "RefreshOptions")
         self.db.RegisterCallback(self, "OnProfileReset", "RefreshOptions")
     end
+    
+    -- Register callback for locale changes or other settings
+    self:RegisterMessage("DingClassic_LocaleChanged", "RefreshOptions")
 
     self.delayedMessage = nil
-end
-
--- Picks a random message from the selected pool (falling back to Default if
--- the selected one is missing or empty) with %d filled in. nil if no messages.
-function DingClassic:GetRandomDingMessage(level)
-    local pool = self.messagePools[self.db.profile.selectedMessagePool]
-    if type(pool) ~= "table" or #pool == 0 then
-        pool = self.messagePools.Default or {}
-    end
-    if #pool == 0 then return nil end
-    local message = pool[math.random(#pool)]:gsub("%%d", tostring(level))
-    return message
 end
 
 function DingClassic:SendLevelUpMessage(level)
@@ -1354,14 +1778,14 @@ function DingClassic:SendLevelUpMessage(level)
         self:Print("|cff888888[DEBUG]|r Leveled up to " .. tostring(level) .. ". Building ding message...")
     end
 
-    local message = self:GetRandomDingMessage(level)
+    local message = self:PickDingMessage(level)
     if not message then
-        self:Print(self.L["NO_MESSAGES"] or "No messages available in the selected pool.")
+        self:Print("The selected message pool is empty - nothing to send.")
         return
     end
 
     -- Check for combat or NPC interaction delays
-    if self:IsInCombat() or self:IsInteractingWithNPC() then
+    if self.inCombat or self:IsInteractingWithNPC() then
         self.delayedMessage = message
         if self.db.profile.debugMode then
             self:Print("|cff888888[DEBUG]|r In combat or talking to an NPC - message delayed until that ends.")
@@ -1374,33 +1798,30 @@ function DingClassic:SendLevelUpMessage(level)
 end
 
 function DingClassic:SendToAllowedChannels(message)
-    -- Party/Raid/Guild have no Blizzard restriction on automated SendChatMessage calls.
+    -- Party/Raid/Guild have no Blizzard restriction on automated chat sends.
     local sentAnywhere = false
     local debugMode = self.db.profile.debugMode
-    local channels = self.db.profile.channels
 
-    if channels.guild then
+    if self.db.profile.channels.guild then
         if IsInGuild() then
-            self:SafeSendChat(message, "GUILD")
+            self:SendChat(message, "GUILD")
             sentAnywhere = true
         elseif debugMode then
             self:Print("|cff888888[DEBUG]|r Guild channel is enabled, but you're not in a guild - nothing sent there.")
         end
     end
 
-    -- Raid toggle covers raid groups, Party toggle covers 5-man groups. In an
-    -- LFG/instance group the message goes to INSTANCE_CHAT (see GetGroupChatType).
-    local groupChat = GetGroupChatType()
-    local groupAllowed = IsInRaid() and channels.raid or (not IsInRaid() and channels.party)
-    if groupChat and groupAllowed then
-        self:SafeSendChat(message, groupChat)
+    local groupChannel, groupToggle = GetGroupChannel()
+    if groupChannel and self.db.profile.channels[groupToggle] then
+        self:SendChat(message, groupChannel)
         sentAnywhere = true
-    elseif debugMode and (channels.party or channels.raid) then
-        if not groupChat then
-            self:Print("|cff888888[DEBUG]|r Party/Raid channel is enabled, but you're not in a group - nothing sent there.")
-        else
-            self:Print("|cff888888[DEBUG]|r You're in a " .. (IsInRaid() and "raid" or "party")
-                .. ", but that channel is disabled - nothing sent there.")
+    elseif debugMode then
+        if self.db.profile.channels.raid and not IsInRaid() and self.db.profile.channels.party and not IsInGroup() then
+            self:Print("|cff888888[DEBUG]|r Party/Raid channels are enabled, but you're not in a group - nothing sent there.")
+        elseif self.db.profile.channels.raid and not IsInRaid() and not self.db.profile.channels.party then
+            self:Print("|cff888888[DEBUG]|r Raid channel is enabled, but you're not in a raid - nothing sent there.")
+        elseif self.db.profile.channels.party and not IsInGroup() and not self.db.profile.channels.raid then
+            self:Print("|cff888888[DEBUG]|r Party channel is enabled, but you're not in a group - nothing sent there.")
         end
     end
 
@@ -1430,110 +1851,16 @@ function DingClassic:IsGRMLoaded()
     return false
 end
 
--- Compares a player against the local player. The GUID (when the caller has
--- one) is checked first since it doesn't depend on how a client spells the
--- realm; the name ("Name" or "Name-Realm", any realm spelling) is the fallback.
-function DingClassic:IsMe(nameString, guid)
-    if guid and guid ~= "" and guid == UnitGUID("player") then
-        return true
+-- Compares a chat sender name (possibly "Name-Realm") against the local player.
+function DingClassic:IsMe(nameString)
+    if not nameString or IsSecretValue(nameString) or nameString == "" then return false end
+    local name, server = strsplit("-", nameString, 2)
+    local myName = UnitName("player")
+    if not server or server == "" then
+        return name == myName
     end
-    local key = NameKey(nameString)
-    return key ~= nil and key == NameKey(UnitName("player"))
-end
-
--- Sends a chat message, remembering what's being sent while the call runs:
--- if the client blocks it, ADDON_ACTION_BLOCKED fires inside this call and
--- OnAddonActionBlocked queues the message for a click-to-send button.
-function DingClassic:SafeSendChat(message, chatType)
-    self.sendingNow = { message = message, chatType = chatType }
-    SendChat(message, chatType)
-    self.sendingNow = nil
-end
-
-function DingClassic:OnAddonActionBlocked(_, blockedAddon)
-    if blockedAddon ~= addonName or not self.sendingNow then return end
-    local pending = self.sendingNow
-    self.sendingNow = nil
-
-    if self.manualSendInProgress then
-        -- Refused even from a click: nothing more we can do for this one.
-        self:Print("The game refused to send: " .. pending.message)
-        return
-    end
-
-    self.blockedQueue = self.blockedQueue or {}
-    table.insert(self.blockedQueue, pending)
-
-    if not self.timerSendsBlocked then
-        self.timerSendsBlocked = true
-        self:Print("The game blocked an automatic chat message. Click the Ding Classic button to send it."
-            .. " Delays are turned off for the rest of this session.")
-    end
-    self:ShowBlockedSendButton()
-end
-
--- A button click is a hardware event, which the client always accepts.
-function DingClassic:ShowBlockedSendButton()
-    local btn = self.blockedSendButton
-    if not btn then
-        btn = CreateFrame("Button", "DingClassicBlockedSendButton", UIParent, "UIPanelButtonTemplate")
-        btn:SetSize(260, 26)
-        btn:SetPoint("TOP", UIParent, "TOP", 0, -120)
-        btn:SetFrameStrata("HIGH")
-        btn:SetMovable(true)
-        btn:RegisterForDrag("LeftButton")
-        btn:SetScript("OnDragStart", btn.StartMoving)
-        btn:SetScript("OnDragStop", btn.StopMovingOrSizing)
-        btn:RegisterForClicks("LeftButtonUp", "RightButtonUp")
-        btn:SetScript("OnClick", function(_, mouseButton)
-            local queue = self.blockedQueue or {}
-            self.blockedQueue = {}
-            if mouseButton == "LeftButton" then
-                self.manualSendInProgress = true
-                for _, item in ipairs(queue) do
-                    self:SafeSendChat(item.message, item.chatType)
-                end
-                self.manualSendInProgress = false
-            end
-            btn:Hide()
-        end)
-        btn:SetScript("OnEnter", function()
-            GameTooltip:SetOwner(btn, "ANCHOR_BOTTOM")
-            GameTooltip:AddLine("Ding Classic")
-            for _, item in ipairs(self.blockedQueue or {}) do
-                GameTooltip:AddLine(item.chatType .. ": " .. item.message, 1, 1, 1, true)
-            end
-            GameTooltip:AddLine("Left-click: send   Right-click: discard   Drag: move", 0.6, 0.6, 0.6)
-            GameTooltip:Show()
-        end)
-        btn:SetScript("OnLeave", function() GameTooltip:Hide() end)
-        self.blockedSendButton = btn
-    end
-    btn:SetText(string.format("Ding Classic: send %d message(s)", #(self.blockedQueue or {})))
-    btn:Show()
-end
-
--- True if the given player is in our current party/raid.
-function DingClassic:IsGroupMember(nameString)
-    local key = NameKey(nameString)
-    if not key or not IsInGroup() then return false end
-    local prefix, count = "party", GetNumSubgroupMembers()
-    if IsInRaid() then
-        prefix, count = "raid", GetNumGroupMembers()
-    end
-    for i = 1, count do
-        local unit = prefix .. i
-        if UnitExists(unit) and NameKey(UnitName(unit)) == key then
-            return true
-        end
-    end
-    return false
-end
-
--- True if the given player is in our guild (per the last roster snapshot).
-function DingClassic:IsGuildMember(nameString)
-    local key = NameKey(nameString)
-    return key ~= nil and self.guildNotes[key] ~= nil
+    local myRealm = (GetNormalizedRealmName and GetNormalizedRealmName()) or GetRealmName()
+    return name == myName and RealmKey(server) == RealmKey(myRealm)
 end
 
 -- Schedules an auto-message (gratz or welcome) to fire via sendFn, after a random delay
@@ -1544,14 +1871,6 @@ end
 -- after the previous scheduled message, it gets pushed later instead of skipped. Every message
 -- still eventually sends, nothing is ever silently lost, they're just spread out over time.
 function DingClassic:ScheduleGratzSend(sendFn, delayMin, delayMax)
-    -- This client has refused a message sent from a timer callback earlier in
-    -- the session (see OnAddonActionBlocked) - send right away, from inside
-    -- the event handler that triggered it, instead of after a delay.
-    if self.timerSendsBlocked then
-        sendFn()
-        return
-    end
-
     local groupingTime = (self.db.profile.gratz.groupingTime or 0) / 1000
     delayMin = (delayMin or 0) / 1000
     delayMax = (delayMax or 0) / 1000
@@ -1564,12 +1883,8 @@ function DingClassic:ScheduleGratzSend(sendFn, delayMin, delayMax)
 
     self.nextGratzSendTime = sendAt + groupingTime
 
-    local wait = sendAt - now
-    if wait > 0 then
-        C_Timer.After(wait, sendFn)
-    else
-        sendFn()
-    end
+    -- Always via our own OnUpdate queue so the send never inherits another addon's taint.
+    self:RunClean(sendFn, math.max(sendAt - now, 0))
 end
 
 -- Substitutes "%s" (player name) and/or "%d" (level) in a message template - same convention
@@ -1592,70 +1907,38 @@ end
 -- (achievementEnable / levelUpEnable / guildLevelUpEnable) before calling this, so the
 -- Gratz & Welcome checkboxes are fully independent of each other.
 function DingClassic:SendGratz(source, playerName, messageTemplate, level)
-    local channels = self.db.profile.gratz.channels
-    local allowed
+    local channel, allowed
     if source == "GUILD" then
-        allowed = channels.guild and IsInGuild()
-    elseif IsInRaid() then
-        allowed = channels.raid
+        channel = "GUILD"
+        allowed = self.db.profile.gratz.channels.guild and IsInGuild()
     else
-        allowed = channels.party and IsInGroup()
+        local toggle
+        channel, toggle = GetGroupChannel()
+        allowed = channel ~= nil and self.db.profile.gratz.channels[toggle]
     end
 
     if not allowed then return end
 
     local template = messageTemplate or self.db.profile.gratz.message or "Gratzzz"
     local message = self:FormatMessage(template, playerName, level)
-    -- The channel is resolved again at send time: the random delay means we
-    -- may have left the guild/group (or it turned into a raid) in between.
-    self:ScheduleGratzSend(function()
-        if source == "GUILD" then
-            if IsInGuild() then self:SafeSendChat(message, "GUILD") end
-        else
-            local groupChat = GetGroupChatType()
-            if groupChat then self:SafeSendChat(message, groupChat) end
-        end
-    end, self.db.profile.gratz.delayMin, self.db.profile.gratz.delayMax)
+    self:ScheduleGratzSend(function() self:SendChat(message, channel) end,
+        self.db.profile.gratz.delayMin, self.db.profile.gratz.delayMax)
 end
 
--- Returns true (and records the time) if this player hasn't had an achievement
--- gratz in the last ACHIEVEMENT_BURST_WINDOW seconds.
-function DingClassic:ClaimAchievementGratz(sender)
-    local key = NameKey(sender)
-    if not key then return false end
-    local now = GetTime()
-    local last = self.recentAchievementGratz[key]
-    if last and now - last < ACHIEVEMENT_BURST_WINDOW then
-        return false
-    end
-    self.recentAchievementGratz[key] = now
-    return true
-end
-
--- Chat event args after the event name: msg, sender, ..., lineID (11), guid (12).
-function DingClassic:OnChatMsgGuildAchievement(_, msg, sender, _, _, _, _, _, _, _, _, _, guid)
+function DingClassic:OnChatMsgGuildAchievement(_, msg, sender)
     if not self.db.profile.gratz.achievementEnable then return end
-    if self:IsMe(sender, guid) then return end
+    if not sender or IsSecretValue(sender) then return end
+    if self:IsMe(sender) then return end
     if self.guildDisabledOverride then return end
     if self:IsPlayerOptedOut(sender) then return end
-    if not self:ClaimAchievementGratz(sender) then return end
     self:SendGratz("GUILD", (strsplit("-", sender)))
 end
 
--- CHAT_MSG_ACHIEVEMENT fires for every player NEARBY, not just group members,
--- so only react to people actually in our party/raid. A guild member in our
--- group also triggers CHAT_MSG_GUILD_ACHIEVEMENT - when that guild gratz will
--- go out, skip the group one so they don't get congratulated twice.
-function DingClassic:OnChatMsgAchievement(_, msg, sender, _, _, _, _, _, _, _, _, _, guid)
+function DingClassic:OnChatMsgAchievement(_, msg, sender)
     if not self.db.profile.gratz.achievementEnable then return end
-    if self:IsMe(sender, guid) then return end
-    if not self:IsGroupMember(sender) then return end
-    if IsInGuild() and self.db.profile.gratz.channels.guild and not self.guildDisabledOverride
-        and self:IsGuildMember(sender) then
-        return
-    end
+    if not sender or IsSecretValue(sender) then return end
+    if self:IsMe(sender) then return end
     if self:IsPlayerOptedOut(sender) then return end
-    if not self:ClaimAchievementGratz(sender) then return end
     self:SendGratz("GROUP", (strsplit("-", sender)))
 end
 
@@ -1668,10 +1951,10 @@ end
 -- increase witnessed live.
 function DingClassic:SeedGroupMemberLevel(unit)
     if not UnitExists(unit) or UnitIsUnit(unit, "player") then return end
-    local key = NameKey(UnitName(unit))
+    local name = UnitName(unit)
     local level = UnitLevel(unit)
-    if not key or not level or level <= 0 then return end
-    self.groupMemberLevels[key] = level
+    if not name or not level or level <= 0 then return end
+    self.groupMemberLevels[name] = level
 end
 
 function DingClassic:OnGroupRosterUpdate()
@@ -1694,53 +1977,52 @@ function DingClassic:OnUnitLevel(_, unit)
     if not UnitExists(unit) or UnitIsUnit(unit, "player") then return end
 
     local name = UnitName(unit)
-    local key = NameKey(UnitName(unit))
     local level = UnitLevel(unit)
-    if not key or not level or level <= 0 then return end
+    if not name or not level or level <= 0 then return end
 
     self.groupMemberLevels = self.groupMemberLevels or {}
-    local previous = self.groupMemberLevels[key]
-    self.groupMemberLevels[key] = level
+    local previous = self.groupMemberLevels[name]
+    self.groupMemberLevels[name] = level
 
     if previous and level > previous and self.db.profile.gratz.levelUpEnable
         and level >= (self.db.profile.gratz.minLevel or 1)
         and level % (self.db.profile.gratz.levelInterval or 1) == 0
-        and not self:IsPlayerOptedOut(key) then
-        self:SendGratz("GROUP", name, self.db.profile.gratz.levelUpMessage, level)
+        and not self:IsPlayerOptedOut(name) then
+        self:SendGratz("GROUP", (strsplit("-", name)), self.db.profile.gratz.levelUpMessage, level)
     end
 end
 
--- Per-player opt-out: returns true if that guild member's own public note contains "[ng]".
+-- Per-player opt-out: looks up ANY guild member's own public note (by name, "Name" or
+-- "Name-Realm" as returned by GetGuildRosterInfo) and returns true if it contains "[ng]".
 -- This is what actually lets an individual member exclude THEMSELVES from being congratulated -
 -- checked against whoever a gratz/welcome message is ABOUT, not against the addon owner.
--- Uses the roster snapshot taken on the last GUILD_ROSTER_UPDATE (see RefreshGuildNotes).
 function DingClassic:IsPlayerOptedOut(name)
-    local key = NameKey(name)
-    local note = key and self.guildNotes[key]
-    return note ~= nil and note:find("[ng]", 1, true) ~= nil
-end
-
--- One pass over the roster: caches every member's (lowercased) public note for the opt-out
--- check above, and lets the addon OWNER silence the whole addon (guild welcome + guild-wide
--- level gratz) by putting "[ng]" in THEIR OWN public note - handy for an officer to flip off
--- without needing to open the options UI.
-function DingClassic:RefreshGuildNotes()
-    local notes = {}
-    local myKey = NameKey(UnitName("player"))
-    local override = false
+    if not name or IsSecretValue(name) then return false end
+    -- Group members come without a realm ("Name"), roster entries with one ("Name-Realm").
+    local bareName = not name:find("-", 1, true)
     for index = 1, GetNumGuildMembers() do
-        local name, _, _, _, _, _, note, _, _, _, _, _, _, _, _, _, guid = GetGuildRosterInfo(index)
-        local key = NameKey(name)
-        if key then
+        local rosterName, _, _, _, _, _, note = GetGuildRosterInfo(index)
+        if rosterName and (rosterName == name or (bareName and strsplit("-", rosterName) == name)) then
             note = (note or ""):lower()
-            notes[key] = note
-            if key == myKey or (guid and guid == UnitGUID("player")) then
-                override = note:find("[ng]", 1, true) ~= nil
-            end
+            return note:find("[ng]", 1, true) ~= nil
         end
     end
-    self.guildNotes = notes
-    self.guildDisabledOverride = override
+    return false
+end
+
+-- Lets the addon OWNER specifically silence the whole addon (guild welcome + guild-wide level
+-- gratz) by putting the tag "[ng]" in THEIR OWN public note - handy for an officer to flip off
+-- without needing to open the options UI. For any OTHER member wanting to opt just themselves
+-- out of being congratulated, see IsPlayerOptedOut above.
+function DingClassic:CheckGuildNoteOverride()
+    for index = 1, GetNumGuildMembers() do
+        local name, _, _, _, _, _, note = GetGuildRosterInfo(index)
+        if self:IsMe(name) then
+            note = (note or ""):lower()
+            self.guildDisabledOverride = note:find("[ng]", 1, true) ~= nil
+            return
+        end
+    end
 end
 
 -- Detects real new guild members by diffing the roster, instead of pattern-matching a
@@ -1749,16 +2031,13 @@ end
 -- and since self.rosterReady gates this until 5s after login, someone who joined while we were
 -- offline is folded into the first snapshot silently, with no retroactive welcome.
 --
--- Guards against a welcome-message storm to the WHOLE guild:
+-- Two guards against a welcome-message storm to the WHOLE guild:
 --  1) If we're not currently in a guild at all (e.g. right after a Hardcore death drops us
 --     from the guild), we leave the last known roster snapshot completely untouched instead of
 --     wiping it to {} - otherwise rejoining later would make every existing member look "new".
 --  2) Even while in a guild, if a large batch of names appear "new" in one diff (rejoining,
 --     a guild transfer, any other roster resync) that's not individual people joining one at a
 --     time - we adopt the new baseline silently without welcoming any of them.
---  3) A name only counts as a join if the guild's total member count actually grew. Names
---     that merely become visible in the roster list (e.g. toggling "Show Offline Members",
---     or someone logging in while offline members are hidden) don't change the total.
 local GUILD_WELCOME_MASS_JOIN_THRESHOLD = 3
 
 function DingClassic:CheckNewGuildMembers()
@@ -1766,9 +2045,8 @@ function DingClassic:CheckNewGuildMembers()
         return
     end
 
-    local totalMembers = GetNumGuildMembers() or 0
     local currentMembers = {}
-    for index = 1, totalMembers do
+    for index = 1, GetNumGuildMembers() do
         local name = GetGuildRosterInfo(index)
         if name then
             currentMembers[name] = true
@@ -1784,30 +2062,21 @@ function DingClassic:CheckNewGuildMembers()
             end
         end
 
-        local grownBy = totalMembers - (self.knownGuildMemberCount or totalMembers)
-
-        if #newNames > 0 and #newNames <= GUILD_WELCOME_MASS_JOIN_THRESHOLD and grownBy > 0 then
-            -- Never welcome more people than the guild actually grew by.
-            for i = 1, math.min(#newNames, grownBy) do
-                local name = newNames[i]
+        if #newNames > 0 and #newNames <= GUILD_WELCOME_MASS_JOIN_THRESHOLD then
+            for _, name in ipairs(newNames) do
                 if not self:IsPlayerOptedOut(name) then
                     self:GuildWelcome((strsplit("-", name)))
                 end
             end
-        elseif #newNames > 0 and self.db.profile.debugMode then
+        elseif #newNames > GUILD_WELCOME_MASS_JOIN_THRESHOLD and self.db.profile.debugMode then
             self:Print(string.format(
-                "|cff00ff00[DEBUG]|r Skipped welcome for %d guild member(s) that appeared without a real join (roster resync or member count didn't grow).",
+                "|cff00ff00[DEBUG]|r Skipped welcome for %d guild members that appeared at once (roster resync, not individual joins).",
                 #newNames
             ))
         end
     end
 
-    -- Only replace the baseline when the roster actually has entries, so an
-    -- empty roster mid-load can't make everyone look new next time.
-    if totalMembers > 0 then
-        self.knownGuildMembers = currentMembers
-        self.knownGuildMemberCount = totalMembers
-    end
+    self.knownGuildMembers = currentMembers
 end
 
 -- Guild-wide level-up gratz: works for ANY guild member, not just people in your party/raid.
@@ -1820,7 +2089,7 @@ function DingClassic:CheckGuildMemberLevels()
     self.knownGuildMemberLevels = self.knownGuildMemberLevels or {}
 
     for index = 1, GetNumGuildMembers() do
-        local name, _, _, level, _, _, note, _, _, _, _, _, _, _, _, _, guid = GetGuildRosterInfo(index)
+        local name, _, _, level, _, _, note = GetGuildRosterInfo(index)
         if name and level and level > 0 then
             local previous = self.knownGuildMemberLevels[name]
 
@@ -1840,7 +2109,7 @@ function DingClassic:CheckGuildMemberLevels()
                     and self.db.profile.gratz.guildLevelUpEnable
                     and level >= (self.db.profile.gratz.minLevel or 1)
                     and level % (self.db.profile.gratz.levelInterval or 1) == 0
-                    and not self:IsMe(name, guid)
+                    and not self:IsMe(name)
                     and not optedOut then
                     self:SendGratz("GUILD", (strsplit("-", name)), self.db.profile.gratz.levelUpMessage, level)
                 end
@@ -1853,14 +2122,12 @@ end
 
 function DingClassic:GuildWelcome(playerName)
     local message = self:FormatMessage(self.db.profile.guildWelcome.message or "Welcome :D", playerName)
-    self:ScheduleGratzSend(function()
-        if IsInGuild() then self:SafeSendChat(message, "GUILD") end
-    end, self.db.profile.guildWelcome.delayMin, self.db.profile.guildWelcome.delayMax)
+    self:ScheduleGratzSend(function() self:SendChat(message, "GUILD") end,
+        self.db.profile.guildWelcome.delayMin, self.db.profile.guildWelcome.delayMax)
 end
 
 function DingClassic:OnGuildRosterUpdate()
-    if not IsInGuild() then return end
-    self:RefreshGuildNotes()
+    self:CheckGuildNoteOverride()
     self:CheckNewGuildMembers()
     self:CheckGuildMemberLevels()
 end
@@ -1868,12 +2135,8 @@ end
 function DingClassic:OnPlayerLevelUp(_, level)
     level = level or UnitLevel("player")
 
-    -- Disabled on purpose by the user: stay quiet (the manual Test button and
-    -- /dc test still print the "disabled" warning).
     if not self.db.profile.enable then
-        if self.db.profile.debugMode then
-            self:Print("|cff888888[DEBUG]|r Leveled up, but Ding Classic is disabled - nothing sent.")
-        end
+        self:Print(self.L["DISABLED_WARNING"] or "Ding Classic is currently disabled.")
         return
     end
 
@@ -1886,28 +2149,29 @@ function DingClassic:OnPlayerLevelUp(_, level)
     self:SendLevelUpMessage(level)
 end
 
--- InCombatLockdown() is also correct right after a /reload mid-fight, when
--- we never saw PLAYER_REGEN_DISABLED.
-function DingClassic:IsInCombat()
-    return self.inCombat or (InCombatLockdown and InCombatLockdown()) or false
-end
-
--- Sends a message held back by combat/NPC interaction, once neither applies.
-function DingClassic:FlushDelayedMessage()
-    if self.delayedMessage and not self:IsInCombat() and not self:IsInteractingWithNPC() then
-        local message = self.delayedMessage
-        self.delayedMessage = nil
-        self:SendMessageToAllowedChannels(message)
-    end
-end
-
 function DingClassic:OnCombatStart()
     self.inCombat = true
 end
 
 function DingClassic:OnCombatEnd()
     self.inCombat = false
+    if #self.pendingChat > 0 then
+        if self:GetGuildSendMode() == "auto" then self:EnsureKeyCatcher() end
+        if self:GetGuildSendMode() == "prefill" then self:RunClean(function() self:TryPrefill() end, 0) end
+    end
     self:FlushDelayedMessage()
+end
+
+-- Sends the ding held back by combat/NPC dialog, but only once NEITHER applies.
+function DingClassic:FlushDelayedMessage()
+    if self.delayedMessage and not self.inCombat and not self:IsInteractingWithNPC() then
+        local message = self.delayedMessage
+        self.delayedMessage = nil
+        if self.db.profile.debugMode then
+            self:Print("|cff888888[DEBUG]|r Combat/NPC dialog over - sending the delayed ding message now.")
+        end
+        self:SendToAllowedChannels(message)
+    end
 end
 
 function DingClassic:OnNPCInteraction()
@@ -1919,10 +2183,23 @@ function DingClassic:OnNPCInteractionEnd()
     self:FlushDelayedMessage()
 end
 
+-- The flag only counts while an NPC dialog is actually on screen, so a
+-- missing close event can't hold the ding back forever.
 function DingClassic:IsInteractingWithNPC()
-    return self.interactingWithNPC
+    if not self.interactingWithNPC then return false end
+    local function shown(f) return f and f.IsShown and f:IsShown() end
+    if shown(GossipFrame) or shown(QuestFrame) then return true end
+    self.interactingWithNPC = false
+    return false
 end
 
+-- Debug helper: WoW Forever apparently replaced Achievements with a "Legacy" system
+-- (Legacy Challenges), and as of this beta there's no public documentation yet for
+-- which event/message fires when one is completed. This registers a temporary
+-- listener for ALL events for 2 minutes and prints anything that looks relevant
+-- (name contains LEGACY/CHALLENGE/ACHIEVEMENT/REWARD/POINT) plus every system chat
+-- message, so we can see the real event name/args the next time a Legacy Challenge
+-- completes and wire it into gratz properly.
 -- Debug helper: WoW Forever apparently replaced Achievements with a "Legacy"
 -- system (Legacy Challenges), and there's no public documentation yet for
 -- which event/message fires when one is completed. Rather than a one-off
@@ -1931,6 +2208,22 @@ end
 -- so it's still there after the fact even if you miss it scrolling by in
 -- chat, and you (or I) can open .../SavedVariables/DingClassic.lua directly
 -- to read it.
+-- Safely stringifies an event arg for logging. Since Patch 12.0 (Midnight),
+-- some combat/cast-related event args are "Secret Values" that can't be
+-- freely tostring'd/concatenated once execution is tainted (e.g. reacting to
+-- UNIT_SPELLCAST_* for another unit) - check issecretvalue() first and use a
+-- placeholder instead of crashing.
+local function SafeArgToString(v)
+    if type(issecretvalue) == "function" then
+        local ok, isSecret = pcall(issecretvalue, v)
+        if ok and isSecret then
+            return "<secret>"
+        end
+    end
+    local ok, result = pcall(tostring, v)
+    return ok and result or "<unprintable>"
+end
+
 function DingClassic:StartEventSniffer()
     if not self.eventSniffer then
         self.eventSniffer = CreateFrame("Frame")
@@ -1955,13 +2248,13 @@ function DingClassic:StartEventSniffer()
         if not self.db.profile.allEventsSeen[event] then
             local args = { ... }
             local parts = {}
-            for i, v in ipairs(args) do parts[i] = tostring(v) end
+            for i, v in ipairs(args) do parts[i] = SafeArgToString(v) end
             self.db.profile.allEventsSeen[event] = (#parts > 0) and table.concat(parts, ", ") or "(no args)"
         end
 
         local line
         if event == "CHAT_MSG_SYSTEM" then
-            local msg = tostring(...)
+            local msg = SafeArgToString((...))
             if msg:lower():match("legacy") or msg:lower():match("achievement") or msg:lower():match("challenge") then
                 line = "[SYSTEM] " .. msg
             end
@@ -1969,7 +2262,7 @@ function DingClassic:StartEventSniffer()
             or event:match("REWARD") or event:match("POINT") then
             local args = { ... }
             local parts = {}
-            for i, v in ipairs(args) do parts[i] = tostring(v) end
+            for i, v in ipairs(args) do parts[i] = SafeArgToString(v) end
             line = event .. " -> " .. table.concat(parts, ", ")
         end
         if line then
@@ -2055,9 +2348,9 @@ end
 
 function DingClassic:HandleSlashCommands(input)
     local rawInput = input or "" -- keep original case for message text
-    input = input and strtrim(input:lower()) or "" -- Ensure input is a string
+    input = input and input:lower() or "" -- Ensure input is a string
 
-    if input == "" or input == "settings" or input == "config" then
+    if input == "" then
         -- Open the options page if no argument or "settings" is provided
         if self.nativeCategory then
             self:OpenNativeSettings()
@@ -2088,6 +2381,22 @@ function DingClassic:HandleSlashCommands(input)
         self:ClearAllEvents()
     elseif input == "clearlog" then
         self:ClearDebugLog()
+    elseif input == "post" then
+        self:SendPending()
+    elseif input == "guildmode" then
+        self:ShowGuildModeChooser()
+    elseif input == "autotest" then
+        self.blockedChannels = {}
+        self:Print("Automatic chat sending will be tried again on the next message.")
+    elseif input == "apicheck" then
+        local function yn(v) return v and "|cff00ff00yes|r" or "|cffff0000no|r" end
+        self:Print("=== API check ===")
+        self:Print("C_ChatInfo.SendChatMessage: " .. yn(C_ChatInfo and C_ChatInfo.SendChatMessage))
+        self:Print("SendChatMessage (global): " .. yn(SendChatMessage))
+        self:Print("C_GuildInfo.GuildRoster: " .. yn(C_GuildInfo and C_GuildInfo.GuildRoster))
+        self:Print("GuildRoster (global): " .. yn(GuildRoster))
+        self:Print("GetNumGuildMembers / GetGuildRosterInfo: " .. yn(GetNumGuildMembers) .. " / " .. yn(GetGuildRosterInfo))
+        self:Print("IsInGuild: " .. tostring(IsInGuild()) .. ", guild members: " .. tostring(GetNumGuildMembers and GetNumGuildMembers() or "n/a"))
     elseif input == "github" then
         self:Print("Ding Classic on GitHub: https://github.com/morno/DingClassic")
     elseif input == "showmsg" then
@@ -2117,25 +2426,20 @@ function DingClassic:HandleSlashCommands(input)
         local w = self.db.profile.guildWelcome
         self:Print("guildWelcome: enable=" .. tostring(w.enable))
         self:Print("profile key in use: " .. tostring(self.db:GetCurrentProfile()))
-    elseif input == "gratzstatus" then
-        self:PrintGratzStatus()
-    elseif input:match("^test") then
-        local levelInput = tonumber(input:match("^test%s+(%d+)")) -- Extract level if provided
-        if levelInput then
-            -- If a specific level is provided, use it
-            self:SendLevelUpMessage(levelInput)
-        else
-            -- Otherwise, use the player's current level
-            self:SendLevelUpMessage(UnitLevel("player"))
-        end
-    elseif input == "sniffevents" then
+    elseif input:match("test") then
+        local levelInput = tonumber(input:match("test%s+(%d+)")) -- Extract level if provided
+        -- typed slash command = real key press, so send directly (counts as a hardware event)
+        self.userInitiated = true
+        pcall(self.SendLevelUpMessage, self, levelInput or UnitLevel("player"))
+        self.userInitiated = false
+    elseif input:match("sniffevents") then
         self:SetDebugMode(true)
-    elseif input == "checklevels" then
+    elseif input:match("checklevels") then
         self:Print("Forcing a guild roster level check now...")
         self:CheckGuildMemberLevels()
     else
         -- Print available commands for invalid input
-        self:Print("Available commands: /dc, /dc test, /dc gratzstatus, /dc checklevels, /dc setmsg <gratz|levelup|welcome> <text>, /dc showmsg, /dc dumpdb, /dc sniffevents, /dc showlog, /dc clearlog, /dc showallevents [filter], /dc clearallevents, /dc github")
+        self:Print("Available commands: /dc, /dc test, /dc gratzstatus, /dc apicheck, /dc post, /dc guildmode, /dc autotest, /dc checklevels, /dc setmsg <gratz|levelup|welcome> <text>, /dc showmsg, /dc dumpdb, /dc sniffevents, /dc showlog, /dc clearlog, /dc showallevents [filter], /dc clearallevents, /dc github")
     end
 end
 
@@ -2156,5 +2460,10 @@ function DingClassic:PrintGratzStatus()
 end
 
 function DingClassic:SendMessageToAllowedChannels(message)
-    self:SendToAllowedChannels(message)
+    -- Only used by the manual test paths (button / slash command), so we're inside a real
+    -- click or key press: send directly instead of via the queue so that hardware event counts.
+    self.userInitiated = true
+    local ok, err = pcall(self.SendToAllowedChannels, self, message)
+    self.userInitiated = false
+    if not ok then self:Print("Send failed: " .. tostring(err)) end
 end
